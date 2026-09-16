@@ -223,10 +223,6 @@ jobs:
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
 
-      - name: Build runtime jar
-        working-directory: backend
-        run: mvn -B -ntp -DskipTests package
-
       - uses: docker/setup-buildx-action@v3
 
       - name: Build image
@@ -239,7 +235,7 @@ jobs:
           outputs: type=docker,dest=/tmp/hatis-platform.tar
 
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           input: /tmp/hatis-platform.tar
           format: table
@@ -248,7 +244,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Generate SBOM
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           input: /tmp/hatis-platform.tar
           format: cyclonedx
