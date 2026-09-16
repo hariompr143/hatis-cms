@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hatis.fullname" . }}
+  labels:
+    {{- include "hatis.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: {{ .Values.platform.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.platform.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "hatis.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "hatis.fullname" . }}
+  labels:
+    {{- include "hatis.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.platform.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "hatis.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+{{- if .Values.platform.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "hatis.fullname" . }}
+  labels:
+    {{- include "hatis.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "hatis.fullname" . }}
+  minReplicas: {{ .Values.platform.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.platform.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.platform.autoscaling.targetCPUUtilizationPercentage }}
+  behavior:
+    scaleDown:
+      # Scale down slowly: shedding capacity too eagerly causes latency spikes.
+      stabilizationWindowSeconds: 300
+    scaleUp:
+      stabilizationWindowSeconds: 30
+{{- end }}

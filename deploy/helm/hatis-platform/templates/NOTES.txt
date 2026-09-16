@@ -1,0 +1,31 @@
+HATIS platform {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Image: {{ include "hatis.image" . }}
+
+Components:
+  - api      {{ include "hatis.fullname" . }}               ({{ if .Values.platform.autoscaling.enabled }}autoscaling {{ .Values.platform.autoscaling.minReplicas }}-{{ .Values.platform.autoscaling.maxReplicas }}{{ else }}{{ .Values.platform.replicaCount }} replicas{{ end }})
+  - worker   {{ include "hatis.fullname" . }}-worker        ({{ if .Values.worker.enabled }}{{ .Values.worker.replicaCount }} replicas{{ else }}disabled{{ end }})
+
+Next steps:
+
+1. Confirm the referenced Secret exists and holds every required key:
+     kubectl -n {{ .Release.Namespace }} get secret {{ include "hatis.secretName" . }}
+
+2. Wait for the rollout and check readiness:
+     kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "hatis.fullname" . }}
+     kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+3. Flyway runs on startup and refuses to start if a migration fails. Inspect with:
+     kubectl -n {{ .Release.Namespace }} logs deployment/{{ include "hatis.fullname" . }} | grep -i flyway
+
+{{ if not .Values.ingress.enabled -}}
+Ingress is disabled. Expose the service yourself, keeping TLS termination in front.
+{{- else -}}
+Ingress host: {{ .Values.ingress.host }}{{ if .Values.certificate.enabled }} (certificate issued by {{ .Values.certificate.issuerRef.kind }}/{{ .Values.certificate.issuerRef.name }}){{ end }}
+{{- end }}
+
+Security notes:
+  - Pods run as UID 10001 with a read-only root filesystem and no capabilities.
+  - The deployer Role grants no cluster-scoped verbs; review it before enabling
+    tenant workload scheduling in a customer cluster.
+  - No secret material is stored in this chart or in Git.

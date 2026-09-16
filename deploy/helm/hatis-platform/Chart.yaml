@@ -1,0 +1,20 @@
+apiVersion: v2
+name: hatis-platform
+description: |
+  HATIS-CMS enterprise platform. Installs the control plane and data plane API,
+  the background worker, and the supporting Kubernetes objects (RBAC, network
+  policies, pod disruption budgets, autoscaling, ingress and certificate
+  requests).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - cms
+  - dam
+  - analytics
+  - multi-tenant
+  - enterprise
+maintainers:
+  - name: HATIS Platform Engineering
+annotations:
+  category: ApplicationPlatform

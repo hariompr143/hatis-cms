@@ -1,0 +1,30 @@
+# Staging overrides for the HATIS platform chart.
+#
+# Staging mirrors production's shape at a smaller scale so that a problem in
+# staging is a problem you would have had in production.
+
+platform:
+  replicaCount: 2
+  resources:
+    requests: { cpu: 250m, memory: 768Mi }
+    limits:   { cpu: "1",  memory: 1536Mi }
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 4
+
+worker:
+  replicaCount: 1
+
+ingress:
+  enabled: true
+  host: api.staging.hatis.example
+
+certificate:
+  enabled: true
+  issuerRef:
+    name: letsencrypt-staging
+    kind: ClusterIssuer
+
+networkPolicy:
+  enabled: true

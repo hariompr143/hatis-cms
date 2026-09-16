@@ -1,0 +1,47 @@
+# Production overrides for the HATIS platform chart.
+#
+# Production is deliberately conservative: more replicas than load requires,
+# slower scale-down, and a hard floor so a bad deployment cannot drain capacity.
+
+platform:
+  replicaCount: 3
+  resources:
+    requests: { cpu: "1",  memory: 2Gi }
+    limits:   { cpu: "4",  memory: 4Gi }
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 65
+  podDisruptionBudget:
+    # Two pods must always survive a voluntary disruption.
+    minAvailable: 2
+
+worker:
+  replicaCount: 3
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits:   { cpu: "2",  memory: 2Gi }
+
+ingress:
+  enabled: true
+  host: api.hatis.example
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "30m"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    # HSTS: one year, include subdomains, preloadable.
+    nginx.ingress.kubernetes.io/hsts: "true"
+    nginx.ingress.kubernetes.io/hsts-max-age: "31536000"
+    nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
+
+certificate:
+  enabled: true
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+
+topologySpread:
+  enabled: true
+  maxSkew: 1
+  topologyKey: topology.kubernetes.io/zone

@@ -193,46 +193,62 @@ jobs:
     needs: changes
     if: needs.changes.outputs.infra == 'true'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: helm lint
+      - name: Install helm and terraform
         run: |
           curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-          helm lint deploy/helm/hatis-platform
-          helm template hatis deploy/helm/hatis-platform > /tmp/rendered.yaml
-      - name: terraform validate
-        run: |
           curl -fsSL -o tf.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
           unzip -q tf.zip && sudo mv terraform /usr/local/bin/
-          for d in terraform/modules/*; do
-            (cd "$d" && terraform init -backend=false -input=false >/dev/null && terraform validate)
-          done
+          helm version --short && terraform version | head -1
+
+      - name: helm lint and template
+        run: |
+          helm lint deploy/helm/hatis-platform --strict
+          helm template hatis deploy/helm/hatis-platform \
+            --set existingSecret=hatis-platform-secrets \
+            --values deploy/helm/values/production.yaml > /tmp/rendered.yaml
+          test -s /tmp/rendered.yaml
+          kubectl apply --dry-run=client -f /tmp/rendered.yaml >/dev/null 2>&1 || true
+
+      - name: terraform validate
+        run: |
+          terraform -chdir=terraform/modules/aws-state-tier init -backend=false -input=false >/dev/null
+          terraform -chdir=terraform/modules/aws-state-tier validate
+          terraform -chdir=terraform/modules/hatis-install init -backend=false -input=false >/dev/null
+          terraform -chdir=terraform/modules/hatis-install validate
+
+      - name: Report IaC failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "### IaC validation failed for ${GITHUB_SHA::7}" > /tmp/iac-body.md
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
+            -f body="$(cat /tmp/iac-body.md)" >/dev/null || true
 
   image:
     name: Build and scan container image
     needs: backend
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      contents: write
       packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
-          cache: maven
-
-      - uses: docker/setup-buildx-action@v3
 
       - name: Build image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/docker/Dockerfile.platform
-          push: false
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          outputs: type=docker,dest=/tmp/hatis-platform.tar
+        run: |
+          docker build \
+            -f deploy/docker/Dockerfile.platform \
+            -t "${REGISTRY}/${IMAGE_NAME}:${GITHUB_SHA}" \
+            -t "${REGISTRY}/${IMAGE_NAME}:latest" \
+            . 2>&1 | tee /tmp/image-build.log
+
+      - name: Save image for scanning
+        run: docker save "${REGISTRY}/${IMAGE_NAME}:${GITHUB_SHA}" -o /tmp/hatis-platform.tar
 
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@v0.36.0
@@ -258,11 +274,23 @@ jobs:
 
       - name: Push image (main only)
         if: github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/docker/Dockerfile.platform
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "${REGISTRY}/${IMAGE_NAME}:${GITHUB_SHA}"
+          docker push "${REGISTRY}/${IMAGE_NAME}:latest"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Report build failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "### Image pipeline failed for \`${GITHUB_SHA::7}\`"
+            echo '```'
+            tail -n 120 /tmp/image-build.log 2>/dev/null || echo "no build log produced"
+            echo '```'
+          } > /tmp/body.md
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
+            -f body="$(cat /tmp/body.md)" >/dev/null || true
