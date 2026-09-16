@@ -56,6 +56,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: backend
@@ -63,14 +65,30 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
 
       - name: Verify (enforce, compile, unit tests, integration tests)
-        run: mvn -B -ntp -e verify
+        run: mvn -B -ntp -e verify 2>&1 | tee /tmp/mvn.log
+
+      # Raw job logs are not always reachable from every environment, so publish
+      # the tail of a failed build as a commit comment.
+      - name: Report build failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "### Backend build failed (\`${GITHUB_SHA::7}\`)"
+            echo '```'
+            grep -E "ERROR|BUILD FAILURE|Tests run:|\[INFO\] Building |Caused by" /tmp/mvn.log | tail -n 180
+            echo '```'
+          } > /tmp/body.md
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
+            -f body="$(cat /tmp/body.md)" >/dev/null
 
       - name: Upload test reports
         if: always()
@@ -154,7 +172,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
@@ -199,7 +217,7 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
