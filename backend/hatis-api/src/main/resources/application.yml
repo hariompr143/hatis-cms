@@ -1,0 +1,131 @@
+spring:
+  application:
+    name: hatis-platform
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+  datasource:
+    url: ${HATIS_DB_URL:jdbc:postgresql://localhost:5432/hatis}
+    username: ${HATIS_DB_USERNAME:hatis}
+    password: ${HATIS_DB_PASSWORD:}
+    hikari:
+      pool-name: hatis-pool
+      maximum-pool-size: ${HATIS_DB_POOL_MAX:20}
+      connection-timeout: 5000
+      validation-timeout: 3000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 50
+          time_zone: UTC
+        order_inserts: true
+        order_updates: true
+        query:
+          in_clause_parameter_padding: true
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+    validate-on-migrate: true
+  data:
+    redis:
+      host: ${HATIS_REDIS_HOST:localhost}
+      port: ${HATIS_REDIS_PORT:6379}
+      timeout: 2s
+  kafka:
+    bootstrap-servers: ${HATIS_KAFKA_BOOTSTRAP:}
+    producer:
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+  servlet:
+    multipart:
+      max-file-size: 25MB
+      max-request-size: 30MB
+
+server:
+  port: ${PORT:8080}
+  shutdown: graceful
+  compression:
+    enabled: true
+  forward-headers-strategy: framework
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+  servlet:
+    session:
+      cookie:
+        http-only: true
+        secure: true
+        same-site: strict
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+      base-path: /internal
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db,redis
+        liveness:
+          include: livenessState
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  tracing:
+    sampling:
+      probability: ${HATIS_TRACE_SAMPLE:0.1}
+  otlp:
+    metrics:
+      export:
+        enabled: false
+
+hatis:
+  security:
+    # RS256 signing key is loaded from the secret store; never from Git.
+    token-issuer: ${HATIS_TOKEN_ISSUER:https://api.hatis.example}
+    access-token-ttl: 15m
+    refresh-token-ttl: 720h
+    key-id: ${HATIS_TOKEN_KEY_ID:default}
+  events:
+    transport: ${HATIS_EVENT_TRANSPORT:outbox}
+    topic: hatis.platform.events
+    relay-batch-size: 200
+    relay-interval: 2s
+  rate-limit:
+    enabled: true
+    backend: ${HATIS_RATE_LIMIT_BACKEND:memory}
+  storage:
+    provider: ${HATIS_STORAGE_PROVIDER:s3}
+  secrets:
+    provider: ${HATIS_SECRETS_PROVIDER:environment}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /docs
+
+logging:
+  level:
+    root: INFO
+    com.hatis.platform: ${HATIS_LOG_LEVEL:INFO}
+    org.hibernate.SQL: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] [traceId=%X{traceId:-},spanId=%X{spanId:-},correlationId=%X{correlationId:-},organizationId=%X{organizationId:-}] %logger{36} - %msg%n"
