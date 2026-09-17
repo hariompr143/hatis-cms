@@ -1,6 +1,7 @@
 package com.hatis.platform.identity.application;
 
-import com.hatis.platform.identity.adapter.persistence.IdentityRepositories;
+import com.hatis.platform.identity.adapter.persistence.UserRepository;
+import com.hatis.platform.identity.adapter.persistence.MfaEnrolmentRepository;
 import com.hatis.platform.identity.domain.MfaEnrolment;
 import com.hatis.platform.identity.domain.User;
 import com.hatis.platform.shared.audit.AuditRecord;
@@ -22,23 +23,25 @@ import java.util.UUID;
  * secret again" endpoint, because there cannot be one.
  */
 @Service
-public class MfaService implements AuthenticationService.MfaSecretDecryptor {
+public class MfaService {
 
     private static final int RECOVERY_CODE_COUNT = 10;
 
-    private final IdentityRepositories.MfaEnrolmentRepository enrolments;
-    private final IdentityRepositories.UserRepository users;
+    private final MfaEnrolmentRepository enrolments;
+    private final UserRepository users;
     private final TotpService totp;
     private final EncryptionService encryption;
     private final TenantKeyService tenantKeys;
+    private final AuthenticationService.MfaSecretDecryptor decryptor;
     private final AuthenticationService authentication;
     private final AuditRecorder audit;
 
-    public MfaService(IdentityRepositories.MfaEnrolmentRepository enrolments,
-                      IdentityRepositories.UserRepository users,
+    public MfaService(MfaEnrolmentRepository enrolments,
+                      UserRepository users,
                       TotpService totp,
                       EncryptionService encryption,
                       TenantKeyService tenantKeys,
+                      MfaSecretDecryptorImpl decryptor,
                       AuthenticationService authentication,
                       AuditRecorder audit) {
         this.enrolments = enrolments;
@@ -46,14 +49,14 @@ public class MfaService implements AuthenticationService.MfaSecretDecryptor {
         this.totp = totp;
         this.encryption = encryption;
         this.tenantKeys = tenantKeys;
+        this.decryptor = decryptor;
         this.authentication = authentication;
         this.audit = audit;
     }
 
-    @Override
+    /** Decrypts an enrolled secret. Delegates so the decryption lives in one place. */
     public String decrypt(MfaEnrolment enrolment) {
-        TenantKeyService.TenantKey key = tenantKeys.keyFor(enrolment.getUserId());
-        return encryption.decryptWith(key.wrappedDek(), key.keyId(), enrolment.getSecretCiphertext());
+        return decryptor.decrypt(enrolment);
     }
 
     /**

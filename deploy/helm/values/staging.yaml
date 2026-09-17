@@ -28,3 +28,24 @@ certificate:
 
 networkPolicy:
   enabled: true
+
+# -- Installation profile. Anything other than `development` makes the chart refuse
+# to render a development-only adapter.
+profile: staging
+
+assets:
+  scanner:
+    mode: clamav
+    clamav:
+      # ClamAV runs as its own deployment in the platform namespace so scanned bytes
+      # never leave the cluster. See docs/architecture/16-observability.md for the
+      # scan metrics this deployment is expected to publish.
+      host: clamav
+      port: 3310
+      timeoutMillis: 120000
+
+storage:
+  provider: s3
+  s3:
+    bucket: hatis-staging-assets
+    region: us-east-1

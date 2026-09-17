@@ -5,7 +5,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.hatis.platform.identity.adapter.persistence.IdentityRepositories;
+import com.hatis.platform.identity.adapter.persistence.UserRepository;
 import com.hatis.platform.organization.domain.Membership;
 import com.hatis.platform.shared.error.PlatformExceptions;
 import com.hatis.platform.shared.secret.EncryptionService;
@@ -32,11 +32,11 @@ public class TenantKeyService {
 
     private final JdbcTemplate jdbcTemplate;
     private final EncryptionService encryption;
-    private final IdentityRepositories.UserRepository users;
+    private final UserRepository users;
 
     public TenantKeyService(JdbcTemplate jdbcTemplate,
                             EncryptionService encryption,
-                            IdentityRepositories.UserRepository users) {
+                            UserRepository users) {
         this.jdbcTemplate = jdbcTemplate;
         this.encryption = encryption;
         this.users = users;

@@ -58,6 +58,32 @@ events:
 
 secretsProvider: environment # environment | vault | aws | kubernetes
 
+# -- Installation profile. `development` is the only profile that permits
+# development-only adapters, such as disabled malware scanning. The chart refuses
+# to render such an adapter under any other profile.
+profile: production
+
+storage:
+  provider: s3           # s3 (AWS S3 or any S3-compatible service)
+  s3:
+    bucket: ""
+    region: us-east-1
+    # Set for MinIO, Ceph RGW, Cloudflare R2 or any other S3-compatible endpoint.
+    endpointOverride: ""
+    pathStyleAccess: false
+
+assets:
+  scanner:
+    # clamav scans inline before an asset becomes deliverable. `none` accepts
+    # uploads unscanned and is refused unless profile=development.
+    mode: clamav
+    clamav:
+      image: "clamav/clamav:1.3"
+      replicaCount: 1
+      host: clamav
+      port: 3310
+      timeoutMillis: 60000
+
 ingress:
   enabled: true
   className: nginx

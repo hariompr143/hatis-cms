@@ -1,6 +1,8 @@
 package com.hatis.platform.identity.application;
 
-import com.hatis.platform.identity.adapter.persistence.IdentityRepositories;
+import com.hatis.platform.identity.adapter.persistence.UserRepository;
+import com.hatis.platform.identity.adapter.persistence.RefreshTokenRepository;
+import com.hatis.platform.identity.adapter.persistence.MfaEnrolmentRepository;
 import com.hatis.platform.identity.domain.MfaEnrolment;
 import com.hatis.platform.identity.domain.RefreshToken;
 import com.hatis.platform.identity.domain.User;
@@ -60,9 +62,9 @@ public class AuthenticationService {
     private static final List<String> COMMON_PASSWORDS = List.of(
             "passwordpassword", "123456789012", "qwertyuiopas", "changeme1234", "letmein12345");
 
-    private final IdentityRepositories.UserRepository users;
-    private final IdentityRepositories.RefreshTokenRepository refreshTokens;
-    private final IdentityRepositories.MfaEnrolmentRepository mfaEnrolments;
+    private final UserRepository users;
+    private final RefreshTokenRepository refreshTokens;
+    private final MfaEnrolmentRepository mfaEnrolments;
     private final PasswordEncoder passwordEncoder;
     private final TokenService tokens;
     private final TotpService totp;
@@ -72,9 +74,9 @@ public class AuthenticationService {
     private final Counter signInSuccess;
     private final Counter signInFailed;
 
-    public AuthenticationService(IdentityRepositories.UserRepository users,
-                                 IdentityRepositories.RefreshTokenRepository refreshTokens,
-                                 IdentityRepositories.MfaEnrolmentRepository mfaEnrolments,
+    public AuthenticationService(UserRepository users,
+                                 RefreshTokenRepository refreshTokens,
+                                 MfaEnrolmentRepository mfaEnrolments,
                                  PasswordEncoder passwordEncoder,
                                  TokenService tokens,
                                  TotpService totp,

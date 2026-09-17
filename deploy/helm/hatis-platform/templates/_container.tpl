@@ -19,6 +19,28 @@ env:
     value: {{ .ctx.Values.events.transport | quote }}
   - name: HATIS_SECRETS_PROVIDER
     value: {{ .ctx.Values.secretsProvider | quote }}
+  - name: HATIS_STORAGE_PROVIDER
+    value: {{ .ctx.Values.storage.provider | quote }}
+  - name: HATIS_STORAGE_S3_BUCKET
+    value: {{ .ctx.Values.storage.s3.bucket | quote }}
+  - name: HATIS_STORAGE_S3_REGION
+    value: {{ .ctx.Values.storage.s3.region | quote }}
+  {{- if .ctx.Values.storage.s3.endpointOverride }}
+  - name: HATIS_STORAGE_S3_ENDPOINT_OVERRIDE
+    value: {{ .ctx.Values.storage.s3.endpointOverride | quote }}
+  - name: HATIS_STORAGE_S3_PATH_STYLE_ACCESS
+    value: {{ .ctx.Values.storage.s3.pathStyleAccess | quote }}
+  {{- end }}
+  - name: HATIS_ASSETS_SCANNER_MODE
+    value: {{ .ctx.Values.assets.scanner.mode | quote }}
+  {{- if eq (toString .ctx.Values.assets.scanner.mode) "clamav" }}
+  - name: HATIS_ASSETS_SCANNER_CLAMAV_HOST
+    value: {{ .ctx.Values.assets.scanner.clamav.host | quote }}
+  - name: HATIS_ASSETS_SCANNER_CLAMAV_PORT
+    value: {{ .ctx.Values.assets.scanner.clamav.port | quote }}
+  - name: HATIS_ASSETS_SCANNER_CLAMAV_TIMEOUT_MILLIS
+    value: {{ .ctx.Values.assets.scanner.clamav.timeoutMillis | quote }}
+  {{- end }}
   - name: SPRING_DATASOURCE_URL
     valueFrom:
       secretKeyRef: { name: {{ include "hatis.secretName" .ctx }}, key: db-url }

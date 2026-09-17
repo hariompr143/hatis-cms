@@ -1,6 +1,7 @@
 package com.hatis.platform.identity.application;
 
-import com.hatis.platform.identity.adapter.persistence.IdentityRepositories;
+import com.hatis.platform.identity.adapter.persistence.ApiKeyRepository;
+import com.hatis.platform.identity.adapter.persistence.ServiceAccountRepository;
 import com.hatis.platform.identity.domain.ApiKey;
 import com.hatis.platform.identity.domain.ServiceAccount;
 import com.hatis.platform.shared.audit.AuditRecord;
@@ -39,13 +40,13 @@ public class ApiKeyService {
 
     private static final SecureRandom RANDOM = new SecureRandom();
 
-    private final IdentityRepositories.ApiKeyRepository apiKeys;
-    private final IdentityRepositories.ServiceAccountRepository serviceAccounts;
+    private final ApiKeyRepository apiKeys;
+    private final ServiceAccountRepository serviceAccounts;
     private final QuotaService quotas;
     private final AuditRecorder audit;
 
-    public ApiKeyService(IdentityRepositories.ApiKeyRepository apiKeys,
-                         IdentityRepositories.ServiceAccountRepository serviceAccounts,
+    public ApiKeyService(ApiKeyRepository apiKeys,
+                         ServiceAccountRepository serviceAccounts,
                          QuotaService quotas,
                          AuditRecorder audit) {
         this.apiKeys = apiKeys;

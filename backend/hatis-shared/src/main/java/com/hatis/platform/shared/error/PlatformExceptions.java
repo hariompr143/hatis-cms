@@ -134,6 +134,20 @@ public final class PlatformExceptions {
             super(ErrorCode.DEPENDENCY_UNAVAILABLE, HttpStatus.SERVICE_UNAVAILABLE,
                     dependency + " is currently unavailable", cause);
         }
+
+        /**
+         * Overload for adapters that must not propagate the underlying exception.
+         *
+         * <p>Provider SDK exceptions routinely embed endpoint URLs, bucket names and
+         * request ids in their message. Adapters pass a message they have written
+         * themselves rather than forwarding {@code e.getMessage()}, and log the
+         * exception where the full detail is appropriate.
+         */
+        public DependencyUnavailable(String dependency, String detail) {
+            super(ErrorCode.DEPENDENCY_UNAVAILABLE, HttpStatus.SERVICE_UNAVAILABLE,
+                    dependency + " is currently unavailable"
+                            + (detail == null || detail.isBlank() ? "" : ": " + detail));
+        }
     }
 
     /** An asynchronous operation failed; the operation record holds the detail. */

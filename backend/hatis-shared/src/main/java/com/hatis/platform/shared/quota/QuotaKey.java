@@ -13,6 +13,10 @@ public enum QuotaKey {
     USERS("users"),
     API_KEYS("api_keys"),
     STORAGE_GIB("storage_gib"),
+    /** Byte-accurate storage accounting, used for enforcement rather than display. */
+    STORAGE_BYTES("storage_bytes"),
+    /** Per-object ceiling. Stops one upload exhausting a plan regardless of quota headroom. */
+    ASSET_MAX_BYTES("asset_max_bytes"),
     ASSET_COUNT("asset_count"),
     CONTENT_ITEMS("content_items"),
     CPU_MILLI("cpu_milli"),
