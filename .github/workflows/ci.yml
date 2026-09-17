@@ -201,34 +201,69 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install helm and terraform
+        shell: bash
         run: |
-          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-          curl -fsSL -o tf.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
+          set -euo pipefail
+          # Pinned release tarballs. The previous version piped an install script
+          # from the helm repository's default branch, which is both unpinned and
+          # a moving target - a rename upstream fails the job with no useful output.
+          HELM_VERSION=3.16.4
+          curl -fsSL -o helm.tgz \
+            "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz"
+          tar -xzf helm.tgz linux-amd64/helm
+          sudo install -m 0755 linux-amd64/helm /usr/local/bin/helm
+          curl -fsSL -o tf.zip \
+            https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
           unzip -q tf.zip && sudo mv terraform /usr/local/bin/
           helm version --short && terraform version | head -1
 
       - name: helm lint and template
+        shell: bash
         run: |
-          helm lint deploy/helm/hatis-platform --strict
-          helm template hatis deploy/helm/hatis-platform \
-            --set existingSecret=hatis-platform-secrets \
-            --values deploy/helm/values/production.yaml > /tmp/rendered.yaml
-          test -s /tmp/rendered.yaml
-          kubectl apply --dry-run=client -f /tmp/rendered.yaml >/dev/null 2>&1 || true
+          set -uo pipefail
+          status=0
+          # Redirected, not piped: a pipe would run the block in a subshell and the
+          # status captured inside it would never reach this shell.
+          {
+            echo "== helm lint (default values)"
+            helm lint deploy/helm/hatis-platform --strict || status=$?
+            echo "== helm template (production values)"
+            helm template hatis deploy/helm/hatis-platform \
+              --set existingSecret=hatis-platform-secrets \
+              --values deploy/helm/values/production.yaml > /tmp/rendered.yaml || status=$?
+            echo "== rendered bytes: $(wc -c < /tmp/rendered.yaml 2>/dev/null || echo 0)"
+            echo "== kubectl dry-run (advisory only)"
+            kubectl apply --dry-run=client -f /tmp/rendered.yaml || true
+          } > /tmp/iac.log 2>&1
+          cat /tmp/iac.log
+          exit $status
 
       - name: terraform validate
+        shell: bash
         run: |
-          terraform -chdir=terraform/modules/aws-state-tier init -backend=false -input=false >/dev/null
-          terraform -chdir=terraform/modules/aws-state-tier validate
-          terraform -chdir=terraform/modules/hatis-install init -backend=false -input=false >/dev/null
-          terraform -chdir=terraform/modules/hatis-install validate
+          set -uo pipefail
+          status=0
+          for module in aws-state-tier hatis-install; do
+            echo "== terraform init $module"
+            terraform -chdir="terraform/modules/$module" init -backend=false -input=false 2>&1 \
+              | tee -a /tmp/iac.log || status=1
+            echo "== terraform validate $module"
+            terraform -chdir="terraform/modules/$module" validate 2>&1 \
+              | tee -a /tmp/iac.log || status=1
+          done
+          exit $status
 
       - name: Report IaC failure
         if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "### IaC validation failed for ${GITHUB_SHA::7}" > /tmp/iac-body.md
+          {
+            echo "### IaC validation failed for ${GITHUB_SHA::7}"
+            echo '```'
+            tail -n 120 /tmp/iac.log 2>/dev/null || echo "(no IaC output captured - the failure was before any step wrote to the log)"
+            echo '```'
+          } > /tmp/iac-body.md
           gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
             -f body="$(cat /tmp/iac-body.md)" >/dev/null || true
 

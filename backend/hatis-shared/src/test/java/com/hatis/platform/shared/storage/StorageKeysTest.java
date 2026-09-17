@@ -73,7 +73,10 @@ class StorageKeysTest {
         assertThat(StorageKeys.sanitize("../../etc/passwd")).isEqualTo("passwd");
         assertThat(StorageKeys.sanitize("a\\b\\c.txt")).isEqualTo("c.txt");
         assertThat(StorageKeys.sanitize("<script>.png")).isEqualTo("_script_.png");
-        assertThat(StorageKeys.sanitize(".hidden")).isEqualTo("_hidden");
+        // A leading dot is prefixed rather than replaced: the rule exists so a
+        // filename cannot become a dotfile such as .htaccess when it lands on disk.
+        assertThat(StorageKeys.sanitize(".hidden")).isEqualTo("_.hidden");
+        assertThat(StorageKeys.sanitize(".htaccess")).isEqualTo("_.htaccess");
         assertThat(StorageKeys.sanitize(null)).isEqualTo("file");
         assertThat(StorageKeys.sanitize("   ")).isEqualTo("file");
     }
