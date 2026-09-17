@@ -203,11 +203,25 @@ jobs:
       - name: Install helm and terraform
         shell: bash
         run: |
-          set -euo pipefail
-          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-          curl -fsSL -o tf.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
-          unzip -q tf.zip && sudo mv terraform /usr/local/bin/
-          helm version --short && terraform version | head -1
+          # No pipefail here on purpose: `terraform version | head -1` closes the pipe
+          # early, terraform then dies on SIGPIPE, and under pipefail that is exit 141
+          # - which is exactly how a previous revision of this step started failing
+          # after the original one had been passing. Output goes to /tmp/iac.log so
+          # the report step can post it; Actions step logs are not readable from
+          # outside the runner.
+          set -uo pipefail
+          {
+            curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+            curl -fsSL -o tf.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
+            unzip -q tf.zip
+            sudo mv terraform /usr/local/bin/
+            echo "== versions"
+            helm version --short
+            terraform version
+          } > /tmp/iac.log 2>&1
+          status=$?
+          cat /tmp/iac.log
+          exit $status
 
       - name: helm lint and template
         shell: bash
@@ -226,7 +240,7 @@ jobs:
             echo "== rendered bytes: $(wc -c < /tmp/rendered.yaml 2>/dev/null || echo 0)"
             echo "== kubectl dry-run (advisory only)"
             kubectl apply --dry-run=client -f /tmp/rendered.yaml || true
-          } > /tmp/iac.log 2>&1
+          } >> /tmp/iac.log 2>&1
           cat /tmp/iac.log
           exit $status
 

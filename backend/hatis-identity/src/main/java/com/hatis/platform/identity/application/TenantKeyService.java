@@ -6,7 +6,6 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.hatis.platform.identity.adapter.persistence.UserRepository;
-import com.hatis.platform.organization.domain.Membership;
 import com.hatis.platform.shared.error.PlatformExceptions;
 import com.hatis.platform.shared.secret.EncryptionService;
 
@@ -29,6 +28,18 @@ import java.util.UUID;
 public class TenantKeyService {
 
     private static final String DEFAULT_KEY_ID = "default";
+
+    /**
+     * The membership state that entitles a user to a tenant key.
+     *
+     * <p>Spelled out here rather than read from the organization context's
+     * {@code Membership.Status} enum: this class deliberately reaches the
+     * organization tables through SQL so that identity keeps no compile-time
+     * dependency on another context's entities, and importing that enum would
+     * undo exactly that. The value is pinned by the check constraint on
+     * {@code org_memberships.status} in V1_002__organization.sql.
+     */
+    private static final String ACTIVE_MEMBERSHIP = "ACTIVE";
 
     private final JdbcTemplate jdbcTemplate;
     private final EncryptionService encryption;
@@ -66,7 +77,7 @@ public class TenantKeyService {
     private UUID organizationFor(UUID userId) {
         List<UUID> ids = jdbcTemplate.queryForList(
                 "select organization_id from org_memberships where user_id = ? and status = ? order by created_at",
-                UUID.class, userId, Membership.Status.ACTIVE.name());
+                UUID.class, userId, ACTIVE_MEMBERSHIP);
         return ids.isEmpty() ? null : ids.get(0);
     }
 
