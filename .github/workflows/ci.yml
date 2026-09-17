@@ -204,16 +204,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Pinned release tarballs. The previous version piped an install script
-          # from the helm repository's default branch, which is both unpinned and
-          # a moving target - a rename upstream fails the job with no useful output.
-          HELM_VERSION=3.16.4
-          curl -fsSL -o helm.tgz \
-            "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz"
-          tar -xzf helm.tgz linux-amd64/helm
-          sudo install -m 0755 linux-amd64/helm /usr/local/bin/helm
-          curl -fsSL -o tf.zip \
-            https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          curl -fsSL -o tf.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
           unzip -q tf.zip && sudo mv terraform /usr/local/bin/
           helm version --short && terraform version | head -1
 
