@@ -1,6 +1,7 @@
 package com.hatis.platform.deployment.application;
 
 import com.hatis.platform.authorization.application.AuthorizationService;
+import com.hatis.platform.authorization.domain.ScopeType;
 import com.hatis.platform.deployment.adapter.persistence.DeploymentRepositories;
 import com.hatis.platform.deployment.domain.Application;
 import com.hatis.platform.deployment.domain.Deployment;
@@ -83,7 +84,7 @@ public class DeploymentService {
     @TenantTransactional(readOnly = true)
     public List<ApplicationView> listApplications(UUID projectId) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
-        authorization.require("application:read", AuthorizationService.ScopeType.PROJECT, projectId);
+        authorization.require("application:read", ScopeType.PROJECT, projectId);
         return applications.findByOrganizationIdAndProjectIdAndArchivedAtIsNull(organizationId, projectId)
                 .stream().map(ApplicationView::from).toList();
     }
@@ -91,7 +92,7 @@ public class DeploymentService {
     @TenantTransactional
     public ApplicationView createApplication(UUID projectId, String name, String slug, String description) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
-        authorization.require("application:write", AuthorizationService.ScopeType.PROJECT, projectId);
+        authorization.require("application:write", ScopeType.PROJECT, projectId);
         quotas.check(organizationId, QuotaKey.APPLICATIONS, 1);
         if (applications.existsByOrganizationIdAndProjectIdAndSlug(organizationId, projectId, slug)) {
             throw new PlatformExceptions.AlreadyExists(
@@ -110,7 +111,7 @@ public class DeploymentService {
                                      Release.SourceType sourceType, String sourceRef, String gitCommit) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
         Application application = requireApplication(applicationId, organizationId);
-        authorization.require("release:write", AuthorizationService.ScopeType.PROJECT,
+        authorization.require("release:write", ScopeType.PROJECT,
                 application.getProjectId());
         if (releases.existsByOrganizationIdAndApplicationIdAndVersion(organizationId, applicationId,
                 version.toLowerCase(java.util.Locale.ROOT))) {
@@ -141,7 +142,7 @@ public class DeploymentService {
     public PageResponse<ReleaseView> listReleases(UUID applicationId, int page, int size) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
         Application application = requireApplication(applicationId, organizationId);
-        authorization.require("release:read", AuthorizationService.ScopeType.PROJECT,
+        authorization.require("release:read", ScopeType.PROJECT,
                 application.getProjectId());
         var pageable = PageResponse.pageable(page, size,
                 Sort.by(Sort.Direction.DESC, "createdAt"));
@@ -166,7 +167,7 @@ public class DeploymentService {
         quotas.check(organizationId, QuotaKey.DEPLOYMENTS, 1);
 
         Application application = requireApplication(applicationId, organizationId);
-        authorization.require("deployment:write", AuthorizationService.ScopeType.PROJECT,
+        authorization.require("deployment:write", ScopeType.PROJECT,
                 application.getProjectId());
 
         Release release = releases.findByIdAndOrganizationId(releaseId, organizationId)
@@ -294,7 +295,7 @@ public class DeploymentService {
     public DeploymentAccepted rollback(UUID environmentId, UUID applicationId) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
         Application application = requireApplication(applicationId, organizationId);
-        authorization.require("deployment:write", AuthorizationService.ScopeType.PROJECT,
+        authorization.require("deployment:write", ScopeType.PROJECT,
                 application.getProjectId());
 
         List<Deployment> history = deployments
@@ -334,7 +335,7 @@ public class DeploymentService {
     @TenantTransactional(readOnly = true)
     public DeploymentView status(UUID deploymentId) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
-        authorization.require("deployment:read", AuthorizationService.ScopeType.ORGANIZATION, organizationId);
+        authorization.require("deployment:read", ScopeType.ORGANIZATION, organizationId);
         Deployment deployment = deployments.findByIdAndOrganizationId(deploymentId, organizationId)
                 .orElseThrow(() -> new PlatformExceptions.NotFound("Deployment", deploymentId));
         return DeploymentView.from(deployment);
@@ -344,7 +345,7 @@ public class DeploymentService {
     public List<String> logs(UUID applicationId, int maxLines) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
         Application application = requireApplication(applicationId, organizationId);
-        authorization.require("deployment:read", AuthorizationService.ScopeType.PROJECT,
+        authorization.require("deployment:read", ScopeType.PROJECT,
                 application.getProjectId());
         Deployment latest = deployments
                 .findByOrganizationIdAndApplicationIdOrderByCreatedAtDesc(organizationId, applicationId)

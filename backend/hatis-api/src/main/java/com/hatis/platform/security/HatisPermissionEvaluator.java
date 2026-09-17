@@ -1,6 +1,7 @@
 package com.hatis.platform.security;
 
 import com.hatis.platform.authorization.application.AuthorizationService;
+import com.hatis.platform.authorization.domain.ScopeType;
 import com.hatis.platform.shared.tenant.TenantContext;
 import com.hatis.platform.shared.tenant.TenantContextHolder;
 import org.slf4j.Logger;
@@ -50,12 +51,12 @@ public class HatisPermissionEvaluator implements PermissionEvaluator {
             return false;
         }
         UUID scopeId = toUuid(targetId);
-        AuthorizationService.ScopeType scopeType = toScopeType(targetType);
+        ScopeType scopeType = toScopeType(targetType);
 
         // The path segment is verified against the authenticated tenant before it
         // is used as an authorization scope. A caller cannot widen their scope by
         // naming someone else's resource.
-        if (scopeType == AuthorizationService.ScopeType.ORGANIZATION
+        if (scopeType == ScopeType.ORGANIZATION
                 && scopeId != null
                 && !scopeId.equals(context.organizationId())) {
             log.debug("Rejected scope {} that does not match tenant {}", scopeId, context.organizationId());
@@ -83,14 +84,14 @@ public class HatisPermissionEvaluator implements PermissionEvaluator {
         }
     }
 
-    private static AuthorizationService.ScopeType toScopeType(String targetType) {
+    private static ScopeType toScopeType(String targetType) {
         if (targetType == null) {
-            return AuthorizationService.ScopeType.ORGANIZATION;
+            return ScopeType.ORGANIZATION;
         }
         try {
-            return AuthorizationService.ScopeType.valueOf(targetType.toUpperCase(java.util.Locale.ROOT));
+            return ScopeType.valueOf(targetType.toUpperCase(java.util.Locale.ROOT));
         } catch (IllegalArgumentException e) {
-            return AuthorizationService.ScopeType.ORGANIZATION;
+            return ScopeType.ORGANIZATION;
         }
     }
 }

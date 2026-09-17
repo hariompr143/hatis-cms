@@ -120,10 +120,6 @@ public final class AuthorizationEntities {
     })
     public static class RoleBinding extends TenantScopedEntity {
 
-        public enum ScopeType {
-            ORGANIZATION, WORKSPACE, PROJECT, ENVIRONMENT, RESOURCE
-        }
-
         public enum Effect {
             ALLOW, DENY
         }

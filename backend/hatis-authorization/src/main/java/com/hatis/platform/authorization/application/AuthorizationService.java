@@ -1,6 +1,7 @@
 package com.hatis.platform.authorization.application;
 
 import com.hatis.platform.authorization.domain.AuthorizationEntities;
+import com.hatis.platform.authorization.domain.ScopeType;
 import com.hatis.platform.shared.audit.AuditRecord;
 import com.hatis.platform.shared.audit.AuditRecorder;
 import com.hatis.platform.shared.error.PlatformExceptions;
@@ -205,9 +206,5 @@ public class AuthorizationService {
         boolean isFresh(Instant now) {
             return now.toEpochMilli() < expiresAtMillis;
         }
-    }
-
-    public enum ScopeType {
-        ORGANIZATION, WORKSPACE, PROJECT, ENVIRONMENT, RESOURCE
     }
 }

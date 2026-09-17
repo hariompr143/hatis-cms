@@ -214,7 +214,10 @@ jobs:
             curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
             curl -fsSL -o tf.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
             unzip -q tf.zip
-            sudo mv terraform /usr/local/bin/
+            # `install`, not `mv`: the runner image already ships a terraform at
+            # /usr/local/bin/terraform, and `mv` prompts before replacing it. With no
+            # tty it reads EOF, answers "[N]one", and the pinned binary never lands.
+            sudo install -m 0755 terraform /usr/local/bin/terraform
             echo "== versions"
             helm version --short
             terraform version

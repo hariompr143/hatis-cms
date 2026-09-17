@@ -5,6 +5,7 @@ import com.hatis.platform.assets.domain.Asset;
 import com.hatis.platform.assets.domain.AssetVersion;
 import com.hatis.platform.assets.port.out.MalwareScanner;
 import com.hatis.platform.authorization.application.AuthorizationService;
+import com.hatis.platform.authorization.domain.ScopeType;
 import com.hatis.platform.shared.api.PageResponse;
 import com.hatis.platform.shared.error.PlatformExceptions;
 import com.hatis.platform.shared.event.EventPublisher;
@@ -74,7 +75,7 @@ public class AssetService {
     public AssetSummary upload(UUID projectId, UUID folderId, String filename, String contentType,
                                InputStream content, long contentLength) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
-        authorization.require("asset:write", AuthorizationService.ScopeType.PROJECT, projectId);
+        authorization.require("asset:write", ScopeType.PROJECT, projectId);
         quotas.check(organizationId, QuotaKey.STORAGE_BYTES, Math.max(contentLength, 0));
         quotas.check(organizationId, QuotaKey.ASSET_COUNT, 1);
         QuotaService.Quota maxAsset = quotas.limit(organizationId, QuotaKey.ASSET_MAX_BYTES);
@@ -119,7 +120,7 @@ public class AssetService {
                                       InputStream content, long contentLength) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
         Asset asset = require(assetId, organizationId);
-        authorization.require("asset:write", AuthorizationService.ScopeType.PROJECT, asset.getProjectId());
+        authorization.require("asset:write", ScopeType.PROJECT, asset.getProjectId());
         quotas.check(organizationId, QuotaKey.STORAGE_BYTES, Math.max(contentLength, 0));
 
         int nextVersion = nextVersionNumber(assetId, organizationId);
@@ -149,7 +150,7 @@ public class AssetService {
     @TenantTransactional
     public AssetSummary rescan(UUID assetId) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
-        authorization.require("asset:write", AuthorizationService.ScopeType.ORGANIZATION, organizationId);
+        authorization.require("asset:write", ScopeType.ORGANIZATION, organizationId);
         Asset asset = require(assetId, organizationId);
         applyScan(asset);
         return toSummary(assets.save(asset));
@@ -160,7 +161,7 @@ public class AssetService {
     public DownloadLink downloadUrl(UUID assetId, Duration requestedTtl) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
         Asset asset = require(assetId, organizationId);
-        authorization.require("asset:read", AuthorizationService.ScopeType.PROJECT, asset.getProjectId());
+        authorization.require("asset:read", ScopeType.PROJECT, asset.getProjectId());
         if (!asset.isDeliverable()) {
             throw new PlatformExceptions.StateConflict(
                     "Asset " + assetId + " is " + asset.getStatus() + " and cannot be downloaded");
@@ -189,14 +190,14 @@ public class AssetService {
     public AssetSummary get(UUID assetId) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
         Asset asset = require(assetId, organizationId);
-        authorization.require("asset:read", AuthorizationService.ScopeType.PROJECT, asset.getProjectId());
+        authorization.require("asset:read", ScopeType.PROJECT, asset.getProjectId());
         return toSummary(asset);
     }
 
     @TenantTransactional(readOnly = true)
     public PageResponse<AssetSummary> list(UUID projectId, UUID folderId, int page, int size) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
-        authorization.require("asset:read", AuthorizationService.ScopeType.PROJECT, projectId);
+        authorization.require("asset:read", ScopeType.PROJECT, projectId);
         Sort sort = Sort.by(Sort.Direction.DESC, "createdAt");
         var pageable = PageResponse.pageable(page, size, sort);
         var result = folderId == null
@@ -211,7 +212,7 @@ public class AssetService {
     public AssetSummary setClassification(UUID assetId, Asset.Classification classification) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
         Asset asset = require(assetId, organizationId);
-        authorization.require("asset:write", AuthorizationService.ScopeType.PROJECT, asset.getProjectId());
+        authorization.require("asset:write", ScopeType.PROJECT, asset.getProjectId());
         asset.setClassification(classification);
         return toSummary(assets.save(asset));
     }
@@ -227,7 +228,7 @@ public class AssetService {
     public void delete(UUID assetId) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
         Asset asset = require(assetId, organizationId);
-        authorization.require("asset:write", AuthorizationService.ScopeType.PROJECT, asset.getProjectId());
+        authorization.require("asset:write", ScopeType.PROJECT, asset.getProjectId());
         asset.delete();
         assets.save(asset);
         quotas.record(organizationId, QuotaKey.STORAGE_BYTES, -asset.getByteSize());

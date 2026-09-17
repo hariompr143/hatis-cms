@@ -3,6 +3,7 @@ package com.hatis.platform.cms.application;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hatis.platform.authorization.application.AuthorizationService;
+import com.hatis.platform.authorization.domain.ScopeType;
 import com.hatis.platform.cms.adapter.persistence.ContentRepositories;
 import com.hatis.platform.cms.domain.ContentItem;
 import com.hatis.platform.cms.domain.ContentType;
@@ -65,14 +66,14 @@ public class ContentService {
 
     @TenantTransactional(readOnly = true)
     public List<ContentType> listTypes(UUID projectId) {
-        UUID organizationId = requireTenant(AuthorizationService.ScopeType.PROJECT, projectId,
+        UUID organizationId = requireTenant(ScopeType.PROJECT, projectId,
                 "content_type:read");
         return types.findByOrganizationIdAndProjectId(organizationId, projectId);
     }
 
     @TenantTransactional(readOnly = true)
     public ContentType type(UUID typeId) {
-        UUID organizationId = requireTenant(AuthorizationService.ScopeType.PROJECT, null, "content_type:read");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, "content_type:read");
         return types.findByIdAndOrganizationId(typeId, organizationId)
                 .orElseThrow(() -> new PlatformExceptions.NotFound("Content type", typeId));
     }
@@ -80,7 +81,7 @@ public class ContentService {
     @TenantTransactional
     public ContentType createType(UUID projectId, String name, String slug, String description,
                                   String schema, String titleField) {
-        UUID organizationId = requireTenant(AuthorizationService.ScopeType.PROJECT, projectId,
+        UUID organizationId = requireTenant(ScopeType.PROJECT, projectId,
                 "content_type:write");
         if (types.existsByOrganizationIdAndProjectIdAndSlug(organizationId, projectId, slug)) {
             throw new PlatformExceptions.AlreadyExists("A content type with slug '" + slug + "' already exists");
@@ -98,7 +99,7 @@ public class ContentService {
     /** Publishes a new schema version without touching existing content. */
     @TenantTransactional
     public ContentType reviseSchema(UUID typeId, String schema) {
-        UUID organizationId = requireTenant(AuthorizationService.ScopeType.PROJECT, null, "content_type:write");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, "content_type:write");
         ContentType type = types.findByIdAndOrganizationId(typeId, organizationId)
                 .orElseThrow(() -> new PlatformExceptions.NotFound("Content type", typeId));
         parseSchema(schema);
@@ -110,7 +111,7 @@ public class ContentService {
 
     @TenantTransactional(readOnly = true)
     public PageResponse<ContentSummary> list(UUID projectId, String status, int page, int size) {
-        UUID organizationId = requireTenant(AuthorizationService.ScopeType.PROJECT, projectId, "content:read");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, projectId, "content:read");
         var pageable = com.hatis.platform.shared.api.PageResponse.pageable(page, size,
                 org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC,
                         "updatedAt"));
@@ -124,7 +125,7 @@ public class ContentService {
 
     @TenantTransactional(readOnly = true)
     public ContentDetail get(UUID itemId) {
-        UUID organizationId = requireTenant(AuthorizationService.ScopeType.PROJECT, null, "content:read");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, "content:read");
         ContentItem item = requireItem(itemId, organizationId);
         ContentVersion version = item.getCurrentVersionId() == null
                 ? null
@@ -135,7 +136,7 @@ public class ContentService {
     @TenantTransactional
     public ContentDetail create(UUID projectId, UUID contentTypeId, String slug, String locale,
                                 JsonNode body, String changeNote) {
-        UUID organizationId = requireTenant(AuthorizationService.ScopeType.PROJECT, projectId, "content:write");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, projectId, "content:write");
         quotas.check(organizationId, QuotaKey.CONTENT_ITEMS, 1);
 
         ContentType type = types.findByIdAndOrganizationId(contentTypeId, organizationId)
@@ -172,7 +173,7 @@ public class ContentService {
     /** Saves a new draft version. Never changes what the delivery API serves. */
     @TenantTransactional
     public ContentDetail update(UUID itemId, JsonNode body, String changeNote) {
-        UUID organizationId = requireTenant(AuthorizationService.ScopeType.PROJECT, null, "content:write");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, "content:write");
         ContentItem item = requireItem(itemId, organizationId);
         ContentType type = types.findByIdAndOrganizationId(item.getContentTypeId(), organizationId)
                 .orElseThrow(() -> new PlatformExceptions.NotFound("Content type", item.getContentTypeId()));
@@ -189,7 +190,7 @@ public class ContentService {
 
     @TenantTransactional
     public ContentDetail publish(UUID itemId) {
-        UUID organizationId = requireTenant(AuthorizationService.ScopeType.PROJECT, null, "content:publish");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, "content:publish");
         ContentItem item = requireItem(itemId, organizationId);
         item.publish();
         items.save(item);
@@ -203,7 +204,7 @@ public class ContentService {
 
     @TenantTransactional
     public ContentDetail unpublish(UUID itemId) {
-        UUID organizationId = requireTenant(AuthorizationService.ScopeType.PROJECT, null, "content:publish");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, "content:publish");
         ContentItem item = requireItem(itemId, organizationId);
         item.unpublish();
         items.save(item);
@@ -217,7 +218,7 @@ public class ContentService {
     /** Rolls the published pointer back to an earlier version without deleting history. */
     @TenantTransactional
     public ContentDetail rollback(UUID itemId, int versionNumber) {
-        UUID organizationId = requireTenant(AuthorizationService.ScopeType.PROJECT, null, "content:publish");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, "content:publish");
         ContentItem item = requireItem(itemId, organizationId);
         ContentVersion target = versions
                 .findByContentItemIdAndOrganizationIdOrderByVersionNumberDesc(item.getId(), organizationId)
@@ -236,7 +237,7 @@ public class ContentService {
 
     @TenantTransactional(readOnly = true)
     public List<VersionSummary> history(UUID itemId) {
-        UUID organizationId = requireTenant(AuthorizationService.ScopeType.PROJECT, null, "content:read");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, "content:read");
         ContentItem item = requireItem(itemId, organizationId);
         return versions.findByContentItemIdAndOrganizationIdOrderByVersionNumberDesc(item.getId(), organizationId)
                 .stream()
@@ -248,7 +249,7 @@ public class ContentService {
     /** Soft delete: the row remains for export and audit until the retention job runs. */
     @TenantTransactional
     public void delete(UUID itemId) {
-        UUID organizationId = requireTenant(AuthorizationService.ScopeType.PROJECT, null, "content:write");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, "content:write");
         ContentItem item = requireItem(itemId, organizationId);
         item.delete();
         items.save(item);
@@ -289,7 +290,7 @@ public class ContentService {
 
     // ------------------------------------------------------------- helpers
 
-    private UUID requireTenant(AuthorizationService.ScopeType scope, UUID scopeId, String permission) {
+    private UUID requireTenant(ScopeType scope, UUID scopeId, String permission) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
         authorization.require(permission, scope, scopeId == null ? organizationId : scopeId);
         return organizationId;

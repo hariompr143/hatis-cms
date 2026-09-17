@@ -1,6 +1,7 @@
 package com.hatis.platform.domains.application;
 
 import com.hatis.platform.authorization.application.AuthorizationService;
+import com.hatis.platform.authorization.domain.ScopeType;
 import com.hatis.platform.domains.adapter.persistence.DomainRepository;
 import com.hatis.platform.domains.domain.Domain;
 import com.hatis.platform.domains.port.out.CertificateProvider;
@@ -72,7 +73,7 @@ public class DomainService {
     @TenantTransactional
     public DomainRegistration register(UUID projectId, UUID environmentId, String hostname) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
-        authorization.require("domain:write", AuthorizationService.ScopeType.PROJECT, projectId);
+        authorization.require("domain:write", ScopeType.PROJECT, projectId);
         quotas.check(organizationId, QuotaKey.DOMAINS, 1);
 
         String normalized = Domain.normalizeHostname(hostname);
@@ -110,7 +111,7 @@ public class DomainService {
     @TenantTransactional
     public Domain check(UUID domainId) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
-        authorization.require("domain:write", AuthorizationService.ScopeType.ORGANIZATION, organizationId);
+        authorization.require("domain:write", ScopeType.ORGANIZATION, organizationId);
         Domain domain = require(domainId, organizationId);
 
         if (domain.isVerificationExpired()) {
@@ -175,7 +176,7 @@ public class DomainService {
     @TenantTransactional(readOnly = true)
     public List<DomainView> list(UUID projectId) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
-        authorization.require("domain:read", AuthorizationService.ScopeType.PROJECT, projectId);
+        authorization.require("domain:read", ScopeType.PROJECT, projectId);
         return domains.findByOrganizationIdAndProjectIdAndStatusNot(organizationId, projectId,
                         Domain.Status.DELETED)
                 .stream().map(DomainView::from).toList();
@@ -184,7 +185,7 @@ public class DomainService {
     @TenantTransactional(readOnly = true)
     public DomainView get(UUID domainId) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
-        authorization.require("domain:read", AuthorizationService.ScopeType.ORGANIZATION, organizationId);
+        authorization.require("domain:read", ScopeType.ORGANIZATION, organizationId);
         return DomainView.from(require(domainId, organizationId));
     }
 
@@ -219,7 +220,7 @@ public class DomainService {
     @TenantTransactional
     public void delete(UUID domainId) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
-        authorization.require("domain:write", AuthorizationService.ScopeType.ORGANIZATION, organizationId);
+        authorization.require("domain:write", ScopeType.ORGANIZATION, organizationId);
         Domain domain = require(domainId, organizationId);
         try {
             managedProvider(domain.getApexDomain()).ifPresent(provider ->
