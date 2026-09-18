@@ -311,13 +311,21 @@ class WebhookEndpointPersistenceIT {
             return endpoint.getId();
         });
 
-        assertThat(asTenant(intruder, em -> em.find(WebhookEndpoint.class, endpointId))).isNull();
-        assertThat(asTenant(intruder, em -> em.createQuery(
-                        "select count(e) from WebhookEndpoint e", Long.class)
-                .getSingleResult())).isZero();
-        assertThat(asTenant(intruder, em -> em.createQuery(
-                        "select count(d) from WebhookDelivery d", Long.class)
-                .getSingleResult())).isZero();
+        // Each lookup goes through a typed local rather than straight into assertThat.
+        // asTenant's T cannot be inferred from an implicitly typed lambda while it is also
+        // the argument of an overloaded method, and javac then resolves assertThat against
+        // its IntPredicate and Predicate<T> overloads and reports an ambiguity that has
+        // nothing to do with the assertion being made.
+        WebhookEndpoint endpointVisibleToIntruder =
+                asTenant(intruder, em -> em.find(WebhookEndpoint.class, endpointId));
+        Long endpointCount = asTenant(intruder, em -> em.createQuery(
+                "select count(e) from WebhookEndpoint e", Long.class).getSingleResult());
+        Long deliveryCount = asTenant(intruder, em -> em.createQuery(
+                "select count(d) from WebhookDelivery d", Long.class).getSingleResult());
+
+        assertThat(endpointVisibleToIntruder).isNull();
+        assertThat(endpointCount).isZero();
+        assertThat(deliveryCount).isZero();
     }
 
     @Test
