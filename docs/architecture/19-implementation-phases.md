@@ -120,6 +120,34 @@ green:**
   1h9m32s. A timeout marks the job *and the whole run* cancelled, which turned one
   advisory scan into a red X on an otherwise green pipeline.
 
+**A green build hid a defect that broke six write paths, and only a missing test found it.**
+Six entities map a Java `String` onto a PostgreSQL `jsonb` column through
+`columnDefinition = "jsonb"`: `OutboxEntry.payload`, `AuditLog.detail`, `ContentType.fields`,
+`ContentVersion.body`, `InboundIntegration.configuration` and `IdempotencyRecord.response`.
+pgjdbc's `stringtype` property defaults to `varchar`, so a `String` parameter reaches the
+server typed as `character varying`, and PostgreSQL refuses to assign that to `jsonb`:
+`ERROR: column "payload" is of type jsonb but expression is of type character varying`.
+Every insert through those mappings failed. Nothing caught it, because nothing in the
+repository had ever flushed one of those entities to a database — `TenantIsolationIT`
+drives the schema over raw JDBC, where the cast is written by hand, and
+`WebhookEndpointPersistenceIT` covers two entities that have no `jsonb` column. The
+annotations were correct; the driver was not, and that is not visible from the code.
+
+`OutboxEntryPersistenceIT` was written to settle it rather than to assume it, and it failed
+7 of 8 on first run, which is the result that turned a suspicion into a fact. The fix is
+pgjdbc's `stringtype=unspecified`, set on the Hikari pool under
+`spring.datasource.hikari.data-source-properties` in `application.yml` — on the pool rather
+than in the URL, because the URL is supplied per environment and a fix that depends on
+whoever configures it remembering is not a fix. One of the nine tests asserts the identical
+insert is still *rejected* without the property, so the setting cannot be removed as
+apparently-redundant configuration.
+
+Two generalisations worth keeping. First, a mapping annotation describes intent; whether the
+driver honours it is a fact that has to be observed against a running server. Second, this
+was invisible for as long as it was because the test suite covered the layers on either side
+of it and not the seam — a raw-JDBC isolation suite that passed over a broken Hibernate
+mapping is not evidence about the mapping, and the same is true in reverse.
+
 **Closing the image scan took four attempts, and three of them were wrong.**
 The scan reported 61 fixable findings (9 critical, 52 high), every one of them inside
 `app.jar` rather than in the base image, so it was a dependency problem and not a

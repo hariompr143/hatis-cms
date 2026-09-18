@@ -55,7 +55,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * That was reproduced against this schema with a prepared statement declaring its parameter
  * {@code varchar}; the same statement declaring it {@code unknown} inserts cleanly. Whether
  * Hibernate reaches the driver as one or the other cannot be settled by reading the
- * annotations, so it is settled here.
+ * annotations, so it was settled here - and it reaches it as {@code varchar}, so all seven
+ * of the write paths in this class failed on first run. The fix is pgjdbc's
+ * {@code stringtype=unspecified}, set on the Hikari pool in {@code application.yml} so that
+ * it cannot depend on whoever configures the URL remembering it.
+ * {@link #theDriverPropertyIsLoadBearing} keeps that property honest.
  *
  * <p>{@link #thePayloadIsStoredAsAJsonbObjectRatherThanAQuotedString} guards the other
  * failure mode. A mapping that sends the value as JSON rather than as a string can
@@ -115,10 +119,16 @@ class OutboxEntryPersistenceIT {
 
         Configuration configuration = new Configuration()
                 .addAnnotatedClass(OutboxEntry.class)
-                .setProperty("jakarta.persistence.jdbc.url", POSTGRES.getJdbcUrl())
                 .setProperty("jakarta.persistence.jdbc.user", "hatis_app")
                 .setProperty("jakarta.persistence.jdbc.password", APP_PASSWORD)
-                .setProperty("jakarta.persistence.jdbc.driver", "org.postgresql.Driver");
+                .setProperty("jakarta.persistence.jdbc.driver", "org.postgresql.Driver")
+                // The same pgjdbc property production sets under
+                // spring.datasource.hikari.data-source-properties in application.yml. It
+                // rides on the URL here because this bootstrap builds its own connections
+                // rather than going through the pool. theDriverPropertyIsLoadBearing below
+                // is what stops the two from drifting apart.
+                .setProperty("jakarta.persistence.jdbc.url",
+                        POSTGRES.getJdbcUrl() + "?stringtype=unspecified");
         // No hbm2ddl.auto on purpose: the schema belongs to Flyway, and letting Hibernate
         // generate or validate it here would test Hibernate's idea of the schema rather
         // than the one the migrations actually produce.
@@ -301,6 +311,31 @@ class OutboxEntryPersistenceIT {
                 // Hibernate wraps the driver's exception and appends its own SQL.
                 .rootCause()
                 .hasMessageContaining("row-level security policy for table \"plat_outbox\"");
+    }
+
+    @Test
+    @DisplayName("the driver property is load-bearing: the same insert is rejected without it")
+    void theDriverPropertyIsLoadBearing() throws Exception {
+        // A connection with pgjdbc's stringtype left at its varchar default, which is the
+        // shape of a deployment that never set the property. Run as the migrator, which is
+        // the container's superuser, so row level security cannot be what fails and the
+        // cause of the rejection is unambiguous.
+        try (Connection connection = dataSource(POSTGRES.getUsername(), POSTGRES.getPassword())
+                .getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "insert into plat_outbox (id, aggregate_type, event_type,"
+                             + " organization_id, occurred_at, payload)"
+                             + " values (?, 'platform', ?, null, now(), ?)")) {
+            statement.setObject(1, UUID.randomUUID());
+            statement.setString(2, "cms.content.published");
+            statement.setString(3, payloadFor("cms.content.published", null));
+
+            assertThatThrownBy(statement::execute)
+                    .as("this is the failure the stringtype property exists to prevent; if "
+                            + "it ever stops failing, the property can be retired")
+                    .hasMessageContaining("column \"payload\" is of type jsonb"
+                            + " but expression is of type character varying");
+        }
     }
 
     private static UUID persist(UUID organizationId, String eventType) {

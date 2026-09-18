@@ -16,6 +16,23 @@ spring:
       maximum-pool-size: ${HATIS_DB_POOL_MAX:20}
       connection-timeout: 5000
       validation-timeout: 3000
+      data-source-properties:
+        # pgjdbc sends a Java String as character varying unless told otherwise, and
+        # PostgreSQL will not assign character varying to jsonb:
+        #
+        #   ERROR: column "payload" is of type jsonb but expression is of type character varying
+        #
+        # Six entities map a String onto a jsonb column - OutboxEntry.payload,
+        # AuditLog.detail, ContentType.fields, ContentVersion.body,
+        # InboundIntegration.configuration and IdempotencyRecord.response - so without
+        # this, no event is ever written to the outbox, no audit record is written, no
+        # content version is saved and no idempotency response is stored. It is set on the
+        # pool rather than in the URL because the URL is supplied per environment and this
+        # must not depend on whoever configures it remembering.
+        #
+        # OutboxEntryPersistenceIT asserts both halves: that writes succeed with the
+        # property, and that the identical insert is rejected without it.
+        stringtype: unspecified
   jpa:
     open-in-view: false
     hibernate:
