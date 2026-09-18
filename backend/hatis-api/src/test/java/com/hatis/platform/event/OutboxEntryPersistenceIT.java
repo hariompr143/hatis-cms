@@ -117,18 +117,23 @@ class OutboxEntryPersistenceIT {
             statement.execute("alter role hatis_app login password '" + APP_PASSWORD + "'");
         }
 
+        // pgjdbc's stringtype has to reach the driver, and this bootstrap does not go
+        // through the Hikari pool where production sets it, so it is passed both ways: as a
+        // hibernate.connection.* property, which Hibernate is documented to hand to the
+        // driver unprefixed, and on the URL. Putting it on the URL alone was tried first
+        // and did not take - the seven writes below all still failed - and which of these
+        // two Hibernate honours cannot be settled without running it. Both are harmless
+        // together, and theDriverPropertyIsLoadBearing keeps the property from being
+        // retired as redundant whichever one turns out to be the operative one.
+        String jdbcUrl = POSTGRES.getJdbcUrl();
         Configuration configuration = new Configuration()
                 .addAnnotatedClass(OutboxEntry.class)
+                .setProperty("jakarta.persistence.jdbc.url",
+                        jdbcUrl + (jdbcUrl.contains("?") ? "&" : "?") + "stringtype=unspecified")
                 .setProperty("jakarta.persistence.jdbc.user", "hatis_app")
                 .setProperty("jakarta.persistence.jdbc.password", APP_PASSWORD)
                 .setProperty("jakarta.persistence.jdbc.driver", "org.postgresql.Driver")
-                // The same pgjdbc property production sets under
-                // spring.datasource.hikari.data-source-properties in application.yml. It
-                // rides on the URL here because this bootstrap builds its own connections
-                // rather than going through the pool. theDriverPropertyIsLoadBearing below
-                // is what stops the two from drifting apart.
-                .setProperty("jakarta.persistence.jdbc.url",
-                        POSTGRES.getJdbcUrl() + "?stringtype=unspecified");
+                .setProperty("hibernate.connection.stringtype", "unspecified");
         // No hbm2ddl.auto on purpose: the schema belongs to Flyway, and letting Hibernate
         // generate or validate it here would test Hibernate's idea of the schema rather
         // than the one the migrations actually produce.
