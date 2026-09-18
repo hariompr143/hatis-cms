@@ -93,6 +93,43 @@ jobs:
           gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
             -f body="$(cat /tmp/body.md)" >/dev/null
 
+      # A green run otherwise leaves no evidence of what executed: the raw job logs are
+      # not reachable from every environment and the artifacts cannot be downloaded, so
+      # "the tests passed" would rest on an exit code alone. These numbers come from the
+      # JUnit XML JUnit itself wrote, per class, which is what makes a claim like "67
+      # unit tests and 9 integration tests" checkable after the fact.
+      - name: Report test totals
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "### Backend test results (\`${GITHUB_SHA::7}\`)"
+            echo
+            echo "| Test class | Tests | Failures | Errors | Skipped |"
+            echo "| --- | --- | --- | --- | --- |"
+            total=0; fails=0; errs=0; skips=0; classes=0
+            for f in $(find . -path '*/target/*-reports/TEST-*.xml' | sort); do
+              n=$(basename "$f" .xml); n=${n#TEST-}
+              t=$(grep -o '<testcase ' "$f" | wc -l)
+              fl=$(grep -o '<failure' "$f" | wc -l)
+              er=$(grep -o '<error' "$f" | wc -l)
+              sk=$(grep -o '<skipped' "$f" | wc -l)
+              echo "| ${n##*.} | $t | $fl | $er | $sk |"
+              total=$((total+t)); fails=$((fails+fl)); errs=$((errs+er)); skips=$((skips+sk))
+              classes=$((classes+1))
+            done
+            echo
+            if [ "$classes" -eq 0 ]; then
+              echo "**No JUnit XML was found.** A green build with zero test classes is not"
+              echo "a passing suite, so this is reported loudly rather than left blank."
+            else
+              echo "**Total: $total tests, $fails failures, $errs errors, $skips skipped** across $classes test classes."
+            fi
+          } > /tmp/summary.md
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
+            -f body="$(cat /tmp/summary.md)" >/dev/null
+
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
