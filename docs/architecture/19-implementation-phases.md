@@ -46,7 +46,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/`; image builds and Trivy exits clean at CRITICAL,HIGH (§19.6) |
 | Architecture boundaries enforced at build time | Done | `HexagonalArchitectureTest` |
 | Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`; lint, typecheck, tests and `next build` green in CI (§19.6) |
-| CI green end to end | Done | All eight jobs green in run `35326549287`, including the image build and Trivy scan. See §19.6. |
+| CI green end to end | Done | All eight jobs green in run `35330210187`. See §19.6. |
 
 **Not yet delivered in Phase 1**
 
@@ -55,7 +55,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Workflow engine | Schema (`V1_008`) and the default template are seeded; there is no service or API. |
 | Analytics | Schema (`V1_011`) only. |
 | Notification | Schema only. |
-| Integration / GitHub inbound | Schema and deployment tokens only; no webhook receiver. |
+| Integration / GitHub inbound | The inbound receiver is implemented (`hatis-integration`): HMAC-verified GitHub push deliveries, tenant-scoped, audited and published as a platform event. What is still missing is the management API to create an integration row and provision its signing secret, so the receiver cannot yet be reached end to end by a customer. |
 | Backups | Documented (`17`); no restore drill has been executed, so the RPO/RTO figures are targets, not results. |
 | OWASP dependency-check | Runs only when an `NVD_API_KEY` secret exists; without one it skips with a notice, because dependency-check cannot fetch the NVD cache inside a job timeout unkeyed. Trivy is the gate that actually fails a build. See §19.6. |
 
@@ -87,10 +87,13 @@ Stated plainly, because a claim of "done" without a named check is worth nothing
 green:**
 
 - **Backend (Java 21 / Spring Boot): success.** All 17 modules compile and
-  `mvn verify` completes, which is 67 unit tests and 9 tenant-isolation integration
-  tests: `StorageKeysTest` 7, `AssetTest` 16, `ContentBodyValidatorTest` 12,
-  `RichTextSanitizerTest` 16, `ReleaseTest` 9, `HexagonalArchitectureTest` 7, and
-  `TenantIsolationIT` 9 against a real PostgreSQL 16 under Testcontainers.
+  `mvn verify` completes. Run `35330210187` reports **104 tests, 0 failures, 0 errors,
+  0 skipped** across 9 classes: `StorageKeysTest` 7, `AssetTest` 16,
+  `ContentBodyValidatorTest` 12, `RichTextSanitizerTest` 16, `ReleaseTest` 9,
+  `HexagonalArchitectureTest` 7, `GitHubSignatureVerifierTest` 19,
+  `GitHubPushEventTest` 9, and `TenantIsolationIT` 9 against a real PostgreSQL 16 under
+  Testcontainers. Those per-class numbers are published as a commit comment on every
+  run, so the count is checkable rather than asserted.
 - **Build and scan container image: success.** The image builds from
   `deploy/docker/Dockerfile.platform` and the Trivy scan over it exits clean at
   `severity: CRITICAL,HIGH` with `ignore-unfixed: true`.
@@ -135,6 +138,19 @@ Data versions its BOM by release train (`2025.0.x`) while `spring-data-commons` 
 `3.5.x`, so `spring-data-bom:3.5.12` does not exist and the module must be pinned
 directly; and a blank severity cell in Trivy's table inherits the row above it, which
 is how CVE-2026-65182 was first misread as HIGH when it is CRITICAL.
+
+**Inbound webhooks and a constraint worth recording.** `hatis-integration` now receives
+GitHub push deliveries: the signature is verified over the raw body before anything is
+parsed, the delivery is audited, and a platform event is published. Implementing it
+surfaced a constraint that will apply to any future pre-authentication lookup.
+`int_integrations` is under forced row level security, so a transaction with no tenant
+bound sees zero rows — the query that would identify the tenant is itself blocked by the
+isolation layer. There was no precedent to copy: `ApiKeyRepository.findByKeyHash` has
+the same shape and is never called, so API key authentication is not actually wired.
+The organization therefore arrives as a path segment, used only to scope one RLS-bound
+read and then verified against the row; it never authorizes anything, since acceptance
+requires an HMAC under that integration's secret. The reasoning is in
+`InboundWebhookService`, not only here.
 
 **Verified locally:**
 
