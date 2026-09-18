@@ -118,12 +118,15 @@
         <type>pom</type>
         <scope>import</scope>
       </dependency>
+      <!--
+        spring-data-commons is pinned as an artifact, not via spring-data-bom: the Spring
+        Data BOM is versioned by release train (2025.0.x) while the module itself is 3.5.x,
+        so spring-data-bom:3.5.12 does not exist and the import fails to resolve.
+      -->
       <dependency>
         <groupId>org.springframework.data</groupId>
-        <artifactId>spring-data-bom</artifactId>
+        <artifactId>spring-data-commons</artifactId>
         <version>${spring-data.version}</version>
-        <type>pom</type>
-        <scope>import</scope>
       </dependency>
       <dependency>
         <groupId>io.netty</groupId>
