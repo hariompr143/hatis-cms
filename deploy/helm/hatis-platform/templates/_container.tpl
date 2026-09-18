@@ -5,7 +5,7 @@ resource shape or health configuration.
 */}}
 {{- define "hatis.containerCommon" -}}
 securityContext:
-  {{- toYaml .Values.containerSecurityContext | nindent 2 }}
+  {{- toYaml .ctx.Values.containerSecurityContext | nindent 2 }}
 env:
   - name: HATIS_ROLE
     value: {{ .role | quote }}

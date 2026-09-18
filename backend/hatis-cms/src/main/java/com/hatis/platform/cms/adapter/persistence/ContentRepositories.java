@@ -59,7 +59,7 @@ public interface ContentRepositories {
                   and i.status = com.hatis.platform.cms.domain.ContentItem$Status.PUBLISHED
                   and i.publishedVersionId is not null
                 """)
-        List<ContentItem> findPublished(@Param("organizationId") UUID organizationId,
+        Page<ContentItem> findPublished(@Param("organizationId") UUID organizationId,
                                         @Param("projectId") UUID projectId,
                                         Pageable pageable);
     }
