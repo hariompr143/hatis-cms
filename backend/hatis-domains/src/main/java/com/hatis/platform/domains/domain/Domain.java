@@ -182,7 +182,16 @@ public class Domain extends TenantScopedEntity {
         return status == Status.ACTIVE;
     }
 
-    static String normalizeHostname(String hostname) {
+    /**
+     * Validates and canonicalizes a hostname, rejecting anything a tenant must not be
+     * able to bind.
+     *
+     * <p>Public because {@code DomainService} needs the canonical form before the
+     * domain row exists - to look up the DNS provider and to check whether the
+     * hostname is already bound. The rejections here are the security boundary; the
+     * caller relying on the same spelling is what keeps it a single boundary.
+     */
+    public static String normalizeHostname(String hostname) {
         if (hostname == null || hostname.isBlank()) {
             throw new PlatformExceptions.Validation("hostname is required", Map.of());
         }
@@ -204,8 +213,13 @@ public class Domain extends TenantScopedEntity {
         return value;
     }
 
-    /** Last two labels — good enough for registration accounting and rate limits. */
-    static String apexOf(String hostname) {
+    /**
+     * Last two labels — good enough for registration accounting and rate limits.
+     *
+     * <p>Public so {@code DomainService} can find the DNS provider that manages the
+     * zone without restating the rule.
+     */
+    public static String apexOf(String hostname) {
         String[] labels = hostname.split("\\.");
         if (labels.length < 2) {
             return hostname;

@@ -203,21 +203,24 @@ jobs:
       - name: Install helm and terraform
         shell: bash
         run: |
-          # No pipefail here on purpose: `terraform version | head -1` closes the pipe
-          # early, terraform then dies on SIGPIPE, and under pipefail that is exit 141
-          # - which is exactly how a previous revision of this step started failing
-          # after the original one had been passing. Output goes to /tmp/iac.log so
-          # the report step can post it; Actions step logs are not readable from
-          # outside the runner.
+          # No `set -e`/`pipefail` here on purpose. A previous revision of this step
+          # ended in `terraform version | head -1`: head closes the pipe, terraform
+          # takes SIGPIPE, and under pipefail that is exit 141 - the step failed for a
+          # reason that had nothing to do with terraform. `curl | bash` has the same
+          # exposure. Output goes to /tmp/iac.log so the report step can post it;
+          # Actions step logs cannot be read from outside the runner.
           set -uo pipefail
           {
             curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
             curl -fsSL -o tf.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
-            unzip -q tf.zip
-            # `install`, not `mv`: the runner image already ships a terraform at
-            # /usr/local/bin/terraform, and `mv` prompts before replacing it. With no
-            # tty it reads EOF, answers "[N]one", and the pinned binary never lands.
-            sudo install -m 0755 terraform /usr/local/bin/terraform
+            # Extract into an empty directory. The checkout root has its own
+            # terraform/ directory, and `unzip` asks "replace terraform?" before
+            # clobbering it; with no tty it reads EOF, answers "[N]one" and exits 1.
+            # Reproduced locally with the identical message.
+            rm -rf /tmp/tf-bin
+            mkdir -p /tmp/tf-bin
+            unzip -q -o tf.zip -d /tmp/tf-bin
+            sudo install -m 0755 /tmp/tf-bin/terraform /usr/local/bin/terraform
             echo "== versions"
             helm version --short
             terraform version

@@ -218,7 +218,17 @@ public class Asset extends TenantScopedEntity {
                 : filename.trim();
     }
 
-    static String normalizeContentType(String contentType) {
+    /**
+     * Reduces a declared content type to the bare type/subtype token the platform
+     * stores and matches on.
+     *
+     * <p>Public because {@code AssetService} needs the same normalized value before
+     * the asset exists - it is what gets written to object storage metadata - and
+     * normalizing twice in two places is how a forbidden type slips through. The
+     * forbidden-type check in the constructor is the enforcement point; this only
+     * makes the two agree on the spelling.
+     */
+    public static String normalizeContentType(String contentType) {
         if (contentType == null || contentType.isBlank()) {
             return "application/octet-stream";
         }

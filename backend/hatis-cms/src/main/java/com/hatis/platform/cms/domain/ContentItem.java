@@ -177,7 +177,14 @@ public class ContentItem extends TenantScopedEntity {
         return status == Status.PUBLISHED && publishedVersionId != null;
     }
 
-    static String normalizeSlug(String slug) {
+    /**
+     * Validates and canonicalizes a slug.
+     *
+     * <p>Public because {@code ContentService} checks slug uniqueness on the
+     * normalized form before the item exists; normalizing again in the service would
+     * let two spellings of one slug both pass the uniqueness check.
+     */
+    public static String normalizeSlug(String slug) {
         if (slug == null || slug.isBlank()) {
             throw new PlatformExceptions.Validation("slug is required", java.util.Map.of());
         }
