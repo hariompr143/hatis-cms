@@ -46,7 +46,8 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/`; image builds and Trivy exits clean at CRITICAL,HIGH (§19.6) |
 | Architecture boundaries enforced at build time | Done | `HexagonalArchitectureTest` |
 | Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`; lint, typecheck, tests and `next build` green in CI (§19.6) |
-| CI green end to end | Done | All eight jobs green in run `35330210187`. See §19.6. |
+| CI green end to end | Done | All eight jobs green in run `35334180491`. See §19.6. |
+| GitHub integration: inbound webhooks and their management | Done | `hatis-integration`; HMAC-verified push receiver plus create/connect/rotate/disconnect, 48 tests |
 
 **Not yet delivered in Phase 1**
 
@@ -55,7 +56,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Workflow engine | Schema (`V1_008`) and the default template are seeded; there is no service or API. |
 | Analytics | Schema (`V1_011`) only. |
 | Notification | Schema only. |
-| Integration / GitHub inbound | The inbound receiver is implemented (`hatis-integration`): HMAC-verified GitHub push deliveries, tenant-scoped, audited and published as a platform event. What is still missing is the management API to create an integration row and provision its signing secret, so the receiver cannot yet be reached end to end by a customer. |
+| Integration / outbound | The inbound receiver and its management API are delivered. Outbound delivery to customer URLs is not: `int_webhook_endpoints` and `int_webhook_deliveries` are schema only, with no Java code referencing either. The outbox relay publishes to an `EventSink` — Kafka or in-process — not to those endpoints. |
 | Backups | Documented (`17`); no restore drill has been executed, so the RPO/RTO figures are targets, not results. |
 | OWASP dependency-check | Runs only when an `NVD_API_KEY` secret exists; without one it skips with a notice, because dependency-check cannot fetch the NVD cache inside a job timeout unkeyed. Trivy is the gate that actually fails a build. See §19.6. |
 
@@ -83,17 +84,18 @@ customer content into a third-party model without a per-tenant control.
 
 Stated plainly, because a claim of "done" without a named check is worth nothing.
 
-**Verified in GitHub Actions, run `35330210187` on commit `96e965a` — all eight jobs
+**Verified in GitHub Actions, run `35334180491` on commit `ccde4bc` — all eight jobs
 green:**
 
 - **Backend (Java 21 / Spring Boot): success.** All 17 modules compile and
-  `mvn verify` completes. Run `35330210187` reports **104 tests, 0 failures, 0 errors,
-  0 skipped** across 9 classes: `StorageKeysTest` 7, `AssetTest` 16,
+  `mvn verify` completes. Run `35334180491` reports **124 tests, 0 failures, 0 errors,
+  0 skipped** across 11 classes: `StorageKeysTest` 7, `AssetTest` 16,
   `ContentBodyValidatorTest` 12, `RichTextSanitizerTest` 16, `ReleaseTest` 9,
   `HexagonalArchitectureTest` 7, `GitHubSignatureVerifierTest` 19,
-  `GitHubPushEventTest` 9, and `TenantIsolationIT` 9 against a real PostgreSQL 16 under
-  Testcontainers. Those per-class numbers are published as a commit comment on every
-  run, so the count is checkable rather than asserted.
+  `GitHubPushEventTest` 9, `InboundWebhookServiceTest` 11, `IntegrationServiceTest` 9,
+  and `TenantIsolationIT` 9 against a real PostgreSQL 16 under Testcontainers. Those
+  per-class numbers are published as a commit comment on every run, so the count is
+  checkable rather than asserted.
 - **Build and scan container image: success.** The image builds from
   `deploy/docker/Dockerfile.platform` and the Trivy scan over it exits clean at
   `severity: CRITICAL,HIGH` with `ignore-unfixed: true`.
@@ -151,6 +153,16 @@ The organization therefore arrives as a path segment, used only to scope one RLS
 read and then verified against the row; it never authorizes anything, since acceptance
 requires an HMAC under that integration's secret. The reasoning is in
 `InboundWebhookService`, not only here.
+
+**Signing secrets are stored retrievably, and that is a deliberate difference from API
+keys.** An API key is only ever compared, so a SHA-256 hash is enough and a database leak
+yields nothing usable. Verifying an HMAC requires the actual key, so the platform must be
+able to read the webhook secret back; it therefore lives in the secret manager and only a
+path is persisted. The consequence is stated plainly rather than glossed: a secret-store
+compromise exposes working signing secrets. That is the boundary the secret manager exists
+to hold, and the reason its adapters are Vault or a cloud KMS rather than a file. Rotation
+deletes the old secret immediately with no grace window, because a window in which both
+secrets are accepted is what makes rotation ineffective against a leaked one.
 
 **Verified locally:**
 
