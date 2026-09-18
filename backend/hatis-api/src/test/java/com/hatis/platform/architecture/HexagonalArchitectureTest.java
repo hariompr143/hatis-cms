@@ -122,9 +122,19 @@ class HexagonalArchitectureTest {
     @Test
     @DisplayName("tenant-scoped entities extend the tenant-scoped base type")
     void tenantScopedEntitiesUseTheBaseType() {
+        // Platform-wide aggregates: they deliberately carry no organization, so they
+        // cannot extend the tenant-scoped base type.
+        String platformWideEntities =
+                ".*\\.(User|RefreshToken|MfaEnrolment|AuditLog|Operation|OutboxEntry"
+                        + "|IdempotencyRecord|Permission|Role)";
+
         ArchRule rule = classes().that().areAnnotatedWith(jakarta.persistence.Entity.class)
-                .and().haveSimpleNameNotIn("User", "RefreshToken", "MfaEnrolment", "AuditLog",
-                        "Operation", "OutboxEntry", "IdempotencyRecord", "Permission", "Role")
+                // haveNameNotMatching rather than haveSimpleNameNotIn: the latter has
+                // no String... overload in ArchUnit 1.3.0. The pattern is matched
+                // against the whole qualified name, so it selects on the simple name
+                // (and on nested classes of the same name, which is intended -
+                // AuthorizationEntities.Role is one of these).
+                .and().haveNameNotMatching(platformWideEntities)
                 .should().beAssignableTo(com.hatis.platform.shared.persistence.TenantScopedEntity.class);
 
         rule.because("a tenant-owned aggregate that is not tenant-scoped in the type system "
