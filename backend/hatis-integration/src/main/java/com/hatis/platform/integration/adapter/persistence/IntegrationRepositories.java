@@ -3,6 +3,7 @@ package com.hatis.platform.integration.adapter.persistence;
 import com.hatis.platform.integration.domain.InboundIntegration;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -71,6 +72,16 @@ public interface IntegrationRepositories {
         Optional<WebhookDelivery> findByIdAndOrganizationId(UUID id, UUID organizationId);
 
         List<WebhookDelivery> findByEndpointIdAndOrganizationId(UUID endpointId, UUID organizationId);
+
+        /**
+         * The dispatcher's retry queue: pending deliveries whose next attempt is due.
+         *
+         * <p>Rows with no {@code next_attempt_at} are excluded, which is what a freshly
+         * opened delivery looks like — the attempt that owns it is still in flight, and
+         * picking it up here would deliver the same event twice.
+         */
+        List<WebhookDelivery> findByOrganizationIdAndStatusAndNextAttemptAtBefore(
+                UUID organizationId, WebhookDelivery.Status status, Instant cutoff);
 
         long countByEndpointIdAndOrganizationIdAndStatus(UUID endpointId, UUID organizationId,
                                                          WebhookDelivery.Status status);

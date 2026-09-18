@@ -388,6 +388,10 @@ class WebhookEndpointPersistenceIT {
                         UUID.randomUUID(), "content.published");
                 if (i == 0) {
                     pending.recordDelivered(200, Instant.now());
+                } else if (i == 1) {
+                    // Due in a minute, so the sweep can be tested against a real clock.
+                    pending.recordFailure(503, "endpoint unavailable",
+                            Instant.now().plusSeconds(60).truncatedTo(ChronoUnit.MICROS), false);
                 }
                 em.persist(pending);
             }
@@ -404,6 +408,16 @@ class WebhookEndpointPersistenceIT {
                     WebhookDelivery.Status.PENDING)).isEqualTo(2);
             assertThat(deliveries.countByEndpointIdAndOrganizationIdAndStatus(endpointId, org,
                     WebhookDelivery.Status.DELIVERED)).isEqualTo(1);
+
+            // The retry queue. The third row is PENDING with no next_attempt_at, because
+            // the attempt that owns it is still in flight; picking it up here would send
+            // the same event twice, so it must be excluded rather than treated as due.
+            Instant soon = Instant.now().plusSeconds(120);
+            assertThat(deliveries.findByOrganizationIdAndStatusAndNextAttemptAtBefore(
+                    org, WebhookDelivery.Status.PENDING, soon)).hasSize(1);
+            Instant alreadyPast = Instant.now().minusSeconds(120);
+            assertThat(deliveries.findByOrganizationIdAndStatusAndNextAttemptAtBefore(
+                    org, WebhookDelivery.Status.PENDING, alreadyPast)).isEmpty();
             return null;
         });
     }
