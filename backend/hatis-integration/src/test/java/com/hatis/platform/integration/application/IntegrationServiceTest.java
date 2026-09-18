@@ -28,6 +28,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -175,7 +176,15 @@ class IntegrationServiceTest {
         IntegrationService.ConnectedIntegration second = service.rotate(connected.getId());
 
         assertThat(second.secret()).isNotEqualTo(first.secret());
-        verify(secrets).put(eq(path), any(Secret.class));
+
+        // Both rotations must overwrite the same path: a rotation that wrote somewhere
+        // else would leave the integration pointing at a stale secret. times(2) because
+        // rotate ran twice - a bare verify() means times(1) and would fail.
+        ArgumentCaptor<Secret> stored = ArgumentCaptor.forClass(Secret.class);
+        verify(secrets, times(2)).put(eq(path), stored.capture());
+        assertThat(stored.getAllValues()).hasSize(2);
+        assertThat(stored.getAllValues().get(0).reveal()).isEqualTo(first.secret());
+        assertThat(stored.getAllValues().get(1).reveal()).isEqualTo(second.secret());
     }
 
     @Test
