@@ -56,7 +56,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Notification | Schema only. |
 | Integration / GitHub inbound | Schema and deployment tokens only; no webhook receiver. |
 | Backups | Documented (`17`); no restore drill has been executed, so the RPO/RTO figures are targets, not results. |
-| CI green | **Unverified.** See §19.6. |
+| CI green | Backend, frontend, IaC, SAST and secret scan green in run `35313278777`. See §19.6. |
 
 ## 19.3 Phase 2 — Enterprise
 
@@ -80,31 +80,53 @@ customer content into a third-party model without a per-tenant control.
 
 ## 19.6 Current verification status
 
-Stated plainly, because a claim of "done" without a named check is worth nothing:
+Stated plainly, because a claim of "done" without a named check is worth nothing.
 
-- **Verified locally, backend:** Java syntax across 130 files (Chevrotain parser, 0
-  failures); all 17 POMs well-formed; entity-to-schema mapping across 25 entities
-  and 69 tables with 0 gaps (`tools/check_entity_schema.py`); Helm values files
-  parse as YAML; every architecture invariant the ArchUnit rules assert was checked
-  by grep before the rule was written.
-- **Verified locally, console:** `npm run lint` clean with `--max-warnings 0`,
-  `tsc --noEmit` clean, 41 Vitest tests passing across 5 files, and
-  `next build` producing 10 routes. These are real runs, not inspections.
-- **Not verified anywhere:** compilation and test execution. This sandbox has no
-  `javac`, no Maven, no Docker, no PostgreSQL and no reachable Maven repository, so
-  `mvn verify` has never run against the current tree. The tests in §15.8 are
-  written and are expected to run in GitHub Actions, but **no CI run has yet
-  executed them**.
-- **Blocked:** the GitHub token in this session has expired. `gh auth status`
-  reports the token is no longer valid and `git push` cannot authenticate, so the
-  work committed on `arena/01a0abb1-hatis-cms` is not on the remote and CI cannot
-  be triggered. Reconnecting GitHub in Arena is the prerequisite for any CI claim.
+**Verified in GitHub Actions, run `35313278777` on commit `2c57cc0`:**
 
-Two earlier defects were found this way and are fixed but still unverified in CI:
-`spring-kafka` was declared under the wrong groupId, and `nimbus-jose-jwt` was not
-pinned. Both were caught by a container-image build step after the backend job
-reported success, because that job piped Maven into `tee` without `pipefail`. The
-pipeline steps now use `set -euo pipefail`.
+- **Backend (Java 21 / Spring Boot): success.** All 17 modules compile and
+  `mvn verify` completes, which is 67 unit tests and 9 tenant-isolation integration
+  tests: `StorageKeysTest` 7, `AssetTest` 16, `ContentBodyValidatorTest` 12,
+  `RichTextSanitizerTest` 16, `ReleaseTest` 9, `HexagonalArchitectureTest` 7, and
+  `TenantIsolationIT` 9 against a real PostgreSQL 16 under Testcontainers.
+- **IaC validation: success.** `helm lint --strict`, `helm template` with the
+  production values, and `terraform validate` for both modules.
+- **Frontend (Next.js / TypeScript): success.** Lint, typecheck, tests, build.
+- **SAST (Semgrep) and secret scan: success.**
+- **Not confirmed:** the dependency scan and the container image build were still
+  running when this session's GitHub token expired. No claim is made about them.
+
+**Verified locally:**
+
+- `tools/check_migrations.py` applies all 14 migrations to a real PostgreSQL 16.2 —
+  69 tables, 56 with row level security, `hatis_app` and `hatis_migrator` created.
+- `tools/check_entity_schema.py`: 25 entities against 69 tables, 0 mapping gaps, and
+  no table declaring a column twice.
+- `tools/check_module_deps.py`, `tools/check_imports.py`,
+  `tools/check_visibility.py`: 0 unresolved imports, 0 missing module dependencies,
+  0 cross-package visibility errors across 138 files.
+- Console: the frontend CI job is green — lint, typecheck, its Vitest suite and
+  `next build`. It was also run locally in earlier sessions with the same result.
+
+**Found by running things rather than reading them.** Three defects below would have
+reached production and are recorded because the checks that caught them are now part
+of the build:
+
+- `V1_003` seeded the eight system roles through a CTE and then joined it from the
+  *next* statement. A CTE is scoped to the statement that opens it, so every Flyway
+  run failed with `relation "system_roles" does not exist`. Found by applying the
+  migrations to a real database.
+- `dep_releases` declared two columns named `version` — the release's semantic
+  version and `BaseEntity`'s optimistic lock. PostgreSQL rejects that outright.
+- `TenantIsolationIT` bound the tenant with a transaction-local `set_config` on an
+  autocommit connection, so the setting was discarded before the next statement and
+  every query saw zero rows. Three isolation tests were passing because nothing was
+  visible to anyone, which is not the same as passing.
+
+**Environment limits, unchanged:** this sandbox has no `javac`, Maven, Docker or
+kubectl, and Maven Central is unreachable, so the backend is verified only in CI.
+`pgserver` provides a real PostgreSQL 16.2 locally, which is how the migrations and
+the row level security behaviour were checked directly.
 
 ## 19.7 Definition of done for a phase
 
