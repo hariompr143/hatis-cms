@@ -45,7 +45,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Secrets: Env / Vault / AWS adapters, envelope encryption | Done | `hatis-infrastructure` |
 | Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/` |
 | Architecture boundaries enforced at build time | Done | `HexagonalArchitectureTest` |
-| Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`, 41 tests, lint, typecheck and `next build` all green locally |
+| Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`; lint, typecheck, tests and `next build` green in CI (§19.6) |
 
 **Not yet delivered in Phase 1**
 
