@@ -83,7 +83,7 @@ customer content into a third-party model without a per-tenant control.
 
 Stated plainly, because a claim of "done" without a named check is worth nothing.
 
-**Verified in GitHub Actions, run `35326549287` on commit `54758ec` — all eight jobs
+**Verified in GitHub Actions, run `35330210187` on commit `96e965a` — all eight jobs
 green:**
 
 - **Backend (Java 21 / Spring Boot): success.** All 17 modules compile and
