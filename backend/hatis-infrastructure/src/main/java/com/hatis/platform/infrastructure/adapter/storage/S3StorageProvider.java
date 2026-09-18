@@ -11,6 +11,7 @@ import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.S3ClientBuilder;
 import software.amazon.awssdk.services.s3.model.ChecksumAlgorithm;
 import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -76,7 +77,7 @@ public class S3StorageProvider implements StorageProvider {
         }
         this.bucket = bucket;
         Region region = Region.of(environment.getProperty("hatis.storage.s3.region", "us-east-1"));
-        S3Client.Builder clientBuilder = S3Client.builder().region(region);
+        S3ClientBuilder clientBuilder = S3Client.builder().region(region);
         S3Presigner.Builder presignerBuilder = S3Presigner.builder().region(region);
         String endpoint = environment.getProperty("hatis.storage.s3.endpoint-override");
         if (endpoint != null && !endpoint.isBlank()) {
