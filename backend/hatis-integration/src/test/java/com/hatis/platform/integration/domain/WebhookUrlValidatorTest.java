@@ -171,4 +171,22 @@ class WebhookUrlValidatorTest {
                 .isInstanceOf(PlatformExceptions.Validation.class)
                 .hasMessageNotContaining("10.1.2.3");
     }
+
+    @Test
+    @DisplayName("the vetting lookup hands back the address it approved")
+    void resolveDeliverableReturnsTheVettedAddress() {
+        // The transport connects to this address rather than resolving again. Vet and
+        // connect have to act on the same address, or the second lookup is the window a
+        // DNS rebinding attack needs.
+        assertThat(WebhookUrlValidator.resolveDeliverable("https://8.8.8.8/hatis"))
+                .isNotEmpty()
+                .allSatisfy(address -> assertThat(address.isAnyLocalAddress()).isFalse());
+    }
+
+    @Test
+    @DisplayName("the vetting lookup refuses before handing back any address")
+    void resolveDeliverableRefusesInternalAddresses() {
+        assertThatThrownBy(() -> WebhookUrlValidator.resolveDeliverable("http://127.0.0.1/x"))
+                .isInstanceOf(PlatformExceptions.BusinessRuleViolation.class);
+    }
 }

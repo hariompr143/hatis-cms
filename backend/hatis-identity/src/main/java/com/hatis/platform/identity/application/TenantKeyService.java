@@ -55,7 +55,20 @@ public class TenantKeyService {
 
     @Transactional(propagation = Propagation.SUPPORTS, readOnly = true)
     public TenantKey keyFor(UUID userId) {
-        UUID organizationId = organizationFor(userId);
+        return keyForOrganization(organizationFor(userId));
+    }
+
+    /**
+     * The data key protecting a whole organization's secrets.
+     *
+     * <p>Callers that already know the organization — a webhook endpoint being registered,
+     * an environment variable being stored — use this rather than {@link #keyFor(UUID)},
+     * which starts from a user. It is the single place that reads the tenant key columns,
+     * so the fallback to the platform key is defined once rather than reimplemented by
+     * every context that needs to encrypt something.
+     */
+    @Transactional(propagation = Propagation.SUPPORTS, readOnly = true)
+    public TenantKey keyForOrganization(UUID organizationId) {
         if (organizationId == null) {
             // A user with no organization yet (mid sign-up) uses the platform key.
             return new TenantKey(platformWrappedKey(), DEFAULT_KEY_ID);

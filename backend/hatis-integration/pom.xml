@@ -26,6 +26,14 @@
       <groupId>com.hatis.platform</groupId>
       <artifactId>hatis-authorization</artifactId>
     </dependency>
+    <!-- TenantKeyService, the single reader of org_organizations.encryption_key_*.
+         Reaching for it rather than re-reading those columns keeps the fallback to the
+         platform key defined in one place. identity depends only on shared, audit and
+         the JWT/crypto libraries, so this edge cannot close a cycle. -->
+    <dependency>
+      <groupId>com.hatis.platform</groupId>
+      <artifactId>hatis-identity</artifactId>
+    </dependency>
     <!-- Provides io.swagger.v3.oas.annotations for the REST adapter. JPA, Spring MVC
          and Jackson arrive transitively through hatis-shared; webflux below is for
          outbound webhook dispatch, not for serving requests. -->

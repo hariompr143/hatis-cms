@@ -101,6 +101,24 @@ public final class WebhookUrlValidator {
      *                                                  non-public address
      */
     public static void assertDeliverable(String raw) {
+        resolveDeliverable(raw);
+    }
+
+    /**
+     * Resolves the host once, refuses any non-public address, and returns the addresses
+     * that passed.
+     *
+     * <p>Callers that are about to open a connection must use this rather than
+     * {@link #assertDeliverable} followed by their own lookup. Two resolutions is exactly
+     * the window a DNS rebinding attack needs: the first answer is public and gets
+     * approved, the second points at the metadata endpoint and gets connected to. One
+     * lookup, vetted, and then connected to <em>by address</em> leaves no window at all.
+     *
+     * @return the vetted addresses, never empty
+     * @throws PlatformExceptions.BusinessRuleViolation when the host is unresolvable or
+     *                                                  resolves to a non-public address
+     */
+    public static List<InetAddress> resolveDeliverable(String raw) {
         URI uri;
         try {
             uri = new URI(raw);
@@ -139,6 +157,7 @@ public final class WebhookUrlValidator {
                                 + ", which the platform is not permitted to contact");
             }
         }
+        return List.of(addresses);
     }
 
     private static void assertAddressIsPublic(InetAddress address, String field) {
