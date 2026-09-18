@@ -88,6 +88,12 @@ public class SecurityConfiguration {
                     "/v1/auth/mfa/verify",
                     "/v1/auth/refresh",
                     "/v1/auth/sign-out",
+                    // Inbound webhooks from external systems. There is no JWT to present:
+                    // the caller is GitHub, and the request is authenticated by an HMAC
+                    // over the raw body under a per-integration secret. Permitting the
+                    // path does not admit the request - InboundWebhookService verifies
+                    // the signature before it reads anything else, and rejects closed.
+                    "/v1/integrations/github/*/*/events",
                     "/internal/health/**",
                     "/internal/info",
                     "/v3/api-docs/**",
