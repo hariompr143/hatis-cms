@@ -46,9 +46,10 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/`; image builds and Trivy exits clean at CRITICAL,HIGH (§19.6) |
 | Architecture boundaries enforced at build time | Done | `HexagonalArchitectureTest` |
 | Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`; lint, typecheck, tests and `next build` green in CI (§19.6) |
-| CI green end to end | Done | All eight jobs green in run `35337366753`. See §19.6. |
+| CI green end to end | Done | All eight jobs green in run `35340608148`. See §19.6. |
 | GitHub integration: inbound webhooks and their management | Done | `hatis-integration`; HMAC-verified push receiver plus create/connect/rotate/disconnect, 48 tests |
 | Outbound webhook security core | Done | `hatis-integration`; `WebhookUrlValidator` (SSRF target checks) and `WebhookSigner` (delivery HMAC), 50 tests. Delivery itself is not delivered — see the outbound row below. |
+| Outbound webhook persistence | Done | `WebhookEndpoint` and `WebhookDelivery` map `int_webhook_endpoints` and `int_webhook_deliveries`, including the platform's first PostgreSQL `text[]` column; `V1_014` adds the bookkeeping columns deliveries need. `WebhookEndpointPersistenceIT` round-trips both against PostgreSQL 16 under forced RLS, 9 tests. |
 
 **Not yet delivered in Phase 1**
 
@@ -57,7 +58,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Workflow engine | Schema (`V1_008`) and the default template are seeded; there is no service or API. |
 | Analytics | Schema (`V1_011`) only. |
 | Notification | Schema only. |
-| Integration / outbound | The inbound receiver and its management API are delivered. Outbound delivery to customer URLs is not. The security core is: `WebhookUrlValidator` (SSRF-resistant target checks — no DNS at registration, per-delivery re-resolution refusing any non-global address) and `WebhookSigner` (`t=,v1=` HMAC over `timestamp.payload`). What is missing is everything that moves bytes: `int_webhook_endpoints` and `int_webhook_deliveries` are still schema only, with no Java code referencing either, and no dispatcher, transport, retry or delivery record exists. The outbox relay publishes to an `EventSink` — Kafka or in-process — not to those endpoints. The DNS-rebinding gap named in `WebhookUrlValidator` is open until the transport pins the resolved address. |
+| Integration / outbound | The inbound receiver, its management API, the outbound security core and the outbound persistence are delivered. **Nothing moves bytes yet.** There is no dispatcher, no transport, no retry schedule and no API to register an endpoint, so a customer cannot subscribe to anything: an `int_webhook_endpoints` row can be persisted but nothing writes one outside a test, and nothing reads one to deliver. The outbox relay publishes to an `EventSink` — Kafka or in-process — not to those endpoints. The DNS-rebinding gap named in `WebhookUrlValidator` is also still open, and can only be closed by the transport pinning the address it resolved. |
 | Backups | Documented (`17`); no restore drill has been executed, so the RPO/RTO figures are targets, not results. |
 | OWASP dependency-check | Runs only when an `NVD_API_KEY` secret exists; without one it skips with a notice, because dependency-check cannot fetch the NVD cache inside a job timeout unkeyed. Trivy is the gate that actually fails a build. See §19.6. |
 
@@ -85,17 +86,18 @@ customer content into a third-party model without a per-tenant control.
 
 Stated plainly, because a claim of "done" without a named check is worth nothing.
 
-**Verified in GitHub Actions, run `35337366753` on commit `320c34a` — all eight jobs
+**Verified in GitHub Actions, run `35340608148` on commit `69b63a8` — all eight jobs
 green:**
 
 - **Backend (Java 21 / Spring Boot): success.** All 17 modules compile and
-  `mvn verify` completes. Run `35337366753` reports **174 tests, 0 failures, 0 errors,
-  0 skipped** across 13 classes: `StorageKeysTest` 7, `AssetTest` 16,
+  `mvn verify` completes. Run `35340608148` reports **183 tests, 0 failures, 0 errors,
+  0 skipped** across 14 classes: `StorageKeysTest` 7, `AssetTest` 16,
   `ContentBodyValidatorTest` 12, `RichTextSanitizerTest` 16, `ReleaseTest` 9,
   `HexagonalArchitectureTest` 7, `GitHubSignatureVerifierTest` 19,
   `GitHubPushEventTest` 9, `InboundWebhookServiceTest` 11, `IntegrationServiceTest` 9,
-  `WebhookUrlValidatorTest` 40, `WebhookSignerTest` 10, and `TenantIsolationIT` 9
-  against a real PostgreSQL 16 under Testcontainers. Those per-class numbers are
+  `WebhookUrlValidatorTest` 40, `WebhookSignerTest` 10, `WebhookEndpointPersistenceIT` 9
+  and `TenantIsolationIT` 9, the last two against a real PostgreSQL 16 under
+  Testcontainers. Those per-class numbers are
   published as a commit comment on every run, so the count is checkable rather than
   asserted.
 - **Build and scan container image: success.** The image builds from
