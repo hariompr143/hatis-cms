@@ -176,28 +176,40 @@ jobs:
     # Advisory, not a gate. Trivy already fails the build on CRITICAL and HIGH findings
     # in the image that actually ships, which is the better signal because it scans the
     # built artifact rather than the dependency graph. This job exists to publish the
-    # OWASP report. It is bounded so that a slow NVD download fails visibly instead of
-    # running until the six hour default and reporting nothing.
+    # OWASP report, and needs an NVD API key to be useful: see the first step.
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      - name: Check for an NVD API key
+        id: nvd
+        # dependency-check 10.x downloads the NVD cache on first run. Without an API key
+        # that download is rate limited hard enough to exceed any sane job timeout: this
+        # job ran 69 minutes and was still going before it was bounded. Rather than burn
+        # 25 minutes to reach a timeout that marks the whole run cancelled, the scan is
+        # skipped with an explicit notice when the key is absent. It is a notice, not a
+        # silent skip, so the absence stays visible on every run.
+        run: |
+          if [ -n "${NVD_API_KEY:-}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "NVD_API_KEY is set; running the OWASP scan."
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=OWASP dependency-check skipped::No NVD_API_KEY secret, so dependency-check cannot fetch the NVD cache within the job timeout. Trivy still gates the shipped image on CRITICAL and HIGH. Add an NVD_API_KEY repository secret to enable this advisory scan."
+          fi
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
       - uses: actions/setup-java@v5
+        if: steps.nvd.outputs.present == 'true'
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
       - name: OWASP dependency-check (backend)
+        if: steps.nvd.outputs.present == 'true'
         working-directory: backend
-        # Without an NVD API key the cache download is rate limited hard enough that
-        # this routinely exceeds an hour. The key is optional, so a fork that does not
-        # define the secret still runs, only slower and more likely to hit the timeout.
         run: |
-          args="-DnvdApiDelay=8000"
-          if [ -n "${NVD_API_KEY:-}" ]; then
-            args="-DnvdApiKey=${NVD_API_KEY}"
-          fi
           status=0
-          mvn -B -ntp -DskipTests "$args" \
+          mvn -B -ntp -DskipTests "-DnvdApiKey=${NVD_API_KEY}" \
             org.owasp:dependency-check-maven:10.0.4:aggregate || status=$?
           if [ "$status" -ne 0 ]; then
             echo "::warning title=dependency-check::exited ${status}; the report artifact may be incomplete or absent"
@@ -207,7 +219,7 @@ jobs:
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
       - name: Upload dependency-check report
-        if: always()
+        if: always() && steps.nvd.outputs.present == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: dependency-check-report
