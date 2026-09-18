@@ -22,18 +22,22 @@ import java.util.UUID;
  * tenant set sees no rows at all. The work is therefore taken one tenant at a time, each
  * sweep running inside that tenant's context.
  *
- * <p><strong>Known defect.</strong> The tenant list is read from {@code org_organizations},
- * and this class's earlier javadoc claimed that table had no row level security. It does:
- * {@code org_organizations} is in the strict tenant table list in
- * {@code V1_013__row_level_security.sql} and carries {@code check (id = organization_id)},
- * so with no tenant bound this query returns <em>zero rows</em> and the sweep delivers
- * nothing. {@code OutboxRelayRlsIT#theOrganizationTableIsNotAReadableTenantDirectory}
- * pins that behaviour. Fixing it needs a tenant source that is not itself row level scoped
- * — a small unsecured directory or work-claim table — which is a schema decision rather
- * than a change to this class.
+ * <p>The tenant list comes from {@code plat_tenant_directory}, added by
+ * {@code V1_015__platform_tenant_directory.sql}. It is <em>not</em> read from
+ * {@code org_organizations}, and an earlier revision of this class did exactly that on the
+ * stated grounds that the table had no row level security. It does: it is in the strict
+ * tenant table list and carries {@code check (id = organization_id)}, so with no tenant
+ * bound that query returned zero rows and the sweep delivered nothing.
+ * {@code OutboxRelayRlsIT#theOrganizationTableIsStillTenantScoped} pins that.
  *
- * <p>Iterating tenants every interval would also be the wrong shape at a few thousand
- * organizations even once the source is fixed, for the same reason.
+ * <p>The directory holds organization identifiers and nothing else, and is kept in sync by
+ * a trigger on {@code org_organizations} so no code path has to remember to write it. It
+ * exists precisely because widening reads on {@code org_organizations} itself would have
+ * exposed {@code encryption_key_wrapped} to anything that set a flag.
+ *
+ * <p>Iterating every tenant each interval is still the wrong shape at a few thousand
+ * organizations; a work-claim table listing only tenants with outstanding deliveries would
+ * be the next step. That cost is stated rather than hidden.
  */
 @Component
 @ConditionalOnProperty(name = "hatis.role", havingValue = "worker", matchIfMissing = true)
@@ -68,6 +72,10 @@ public class WebhookDeliveryWorker {
     }
 
     private List<UUID> organizations() {
-        return jdbcTemplate.queryForList("select id from org_organizations", UUID.class);
+        // Not org_organizations: that table is row level scoped, and this query runs with
+        // no tenant bound. The directory has no RLS by design and holds ids only.
+        return jdbcTemplate.queryForList(
+                "select organization_id from plat_tenant_directory order by created_at",
+                UUID.class);
     }
 }

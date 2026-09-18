@@ -18,43 +18,40 @@ import java.sql.Statement;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * What row level security actually does to the transactional outbox.
+ * What row level security does to the transactional outbox, and what {@code V1_015}
+ * changed about it.
  *
- * <h2>These tests characterise a defect, and two of them are meant to read as alarming</h2>
+ * <p>These tests exist because the behaviour here is not obvious from the code and twice
+ * turned out to be the opposite of what a comment claimed. Assertions are scoped to a
+ * specific row id rather than counting the table, because the container is shared between
+ * tests and a count would make one test's result depend on another's ordering.
  *
- * {@code plat_outbox} is in the strict tenant table list, so it carries
- * {@code force row level security} with a policy of
- * {@code organization_id = nullif(current_setting('hatis.organization_id', true), '')::uuid}.
- * The migrations also strip {@code BYPASSRLS} from {@code hatis_app} if anything ever
- * grants it. Put those two facts together and:
+ * <h2>What V1_015 fixed</h2>
  *
  * <ul>
- *   <li>{@code OutboxRelay.drainBatch()} calls {@code outbox.findPending(...)} with no
- *       tenant context bound, so the policy compares against NULL and matches nothing.
- *       <strong>The relay cannot see a single row, and no event is ever published.</strong>
- *       That is {@link #theRelaySeesNothingWithoutATenantContext}.</li>
- *   <li>An event with no organization — {@code organization_id} is nullable and platform
- *       events use it — is invisible under <em>every</em> tenant's context, so no
- *       tenant-scoped read can ever publish one. That is
- *       {@link #aPlatformWideRowIsInvisibleToEveryTenant}.</li>
+ *   <li>Platform-wide events — {@code organization_id} is NULL — were invisible under
+ *       every tenant, because NULL can never equal a tenant's id. {@code plat_outbox} now
+ *       carries a widened read policy of the kind {@code auth_roles} already had, while
+ *       {@code WITH CHECK} stays strict so a tenant still cannot create an event claiming
+ *       to belong to nobody.</li>
+ *   <li>Background jobs had nowhere to get a list of tenants: {@code org_organizations} is
+ *       itself tenant scoped. {@code plat_tenant_directory} holds nothing but ids and has
+ *       no row level security, so a job can enumerate tenants and then bind each one.</li>
  * </ul>
  *
- * <p>Both were reproduced against a plain PostgreSQL 16.2 before this test was written, and
- * this file exists to keep them reproducible in CI instead of living only in a paragraph of
- * documentation. The assertions state what the code does today, not what it should do. When
- * the relay is fixed, these two tests must be rewritten to assert the fixed behaviour, and
- * the fact that they have to change is the point.
+ * <h2>What is still true, and constrains the relay</h2>
  *
- * <p>The fix is a decision about the security model rather than a one-line change: either a
- * dedicated worker role that does bypass row level security, or a relay that iterates
- * tenants and binds each one in turn. Platform events need a third thing either way — a
- * read policy that admits rows with no organization, the way {@code auth_roles} and
- * {@code wf_definitions} already do for catalogue rows.
+ * A query with no tenant bound still sees no tenant-owned rows. That is correct and must
+ * stay correct; it means {@code OutboxRelay} cannot simply call {@code findPending}, and
+ * has to walk {@code plat_tenant_directory} and bind each tenant in turn.
+ * {@link #anUnboundQueryStillSeesNoTenantOwnedRows} is the test that would fail if anyone
+ * "fixed" the relay by weakening this instead.
  */
 @Testcontainers
-@DisplayName("Row level security and the transactional outbox")
+@DisplayName("Row level security, the transactional outbox and the tenant directory")
 class OutboxRelayRlsIT {
 
     private static final String APP_PASSWORD = "integration-test-only";
@@ -89,100 +86,139 @@ class OutboxRelayRlsIT {
     }
 
     @Test
-    @DisplayName("a tenant transaction can write and read its own outbox row")
+    @DisplayName("a tenant transaction can publish and read back its own outbox row")
     void aTenantTransactionCanPublishAndReadBack() throws Exception {
         UUID organizationId = UUID.randomUUID();
+        UUID eventId = UUID.randomUUID();
 
         try (Connection connection = appDataSource.getConnection()) {
             bindTenant(connection, organizationId);
-            insertOutboxRow(connection, organizationId, "content.published");
-            assertThat(pendingCount(connection))
+            insertOutboxRow(connection, eventId, organizationId, "content.published");
+            assertThat(countById(connection, eventId))
                     .as("the publisher runs inside a tenant transaction, so RLS lets it through")
                     .isEqualTo(1);
         }
     }
 
     @Test
-    @DisplayName("DEFECT: the relay, which binds no tenant, sees no outbox rows at all")
-    void theRelaySeesNothingWithoutATenantContext() throws Exception {
+    @DisplayName("an unbound query still sees no tenant-owned rows")
+    void anUnboundQueryStillSeesNoTenantOwnedRows() throws Exception {
         UUID organizationId = UUID.randomUUID();
+        UUID eventId = UUID.randomUUID();
         try (Connection connection = appDataSource.getConnection()) {
             bindTenant(connection, organizationId);
-            insertOutboxRow(connection, organizationId, "content.published");
+            insertOutboxRow(connection, eventId, organizationId, "content.published");
             // bindTenant leaves autocommit off, so without this the row would be rolled
-            // back on close and the next assertion would pass because the outbox was
-            // empty rather than because the relay cannot see it.
+            // back and the next assertion would pass because the table was empty.
             connection.commit();
         }
 
-        // Exactly what OutboxRelay.drainBatch() does: a plain query on a fresh connection
-        // with no hatis.organization_id bound, because nothing in the relay binds one.
-        try (Connection connection = appDataSource.getConnection();
-             Statement statement = connection.createStatement()) {
+        try (Connection connection = appDataSource.getConnection()) {
             assertThat(connection.getAutoCommit())
                     .as("no transaction, therefore no transaction-local tenant setting")
                     .isTrue();
-            assertThat(pendingCount(statement))
-                    .as("the outbox is not empty, yet an unbound relay sees none of it, "
-                            + "so no event is ever published")
+            assertThat(countById(connection, eventId))
+                    .as("this must stay zero: the relay has to bind a tenant per sweep, and "
+                            + "weakening this policy would be the wrong way to fix it")
                     .isZero();
         }
     }
 
     @Test
-    @DisplayName("DEFECT: a platform-wide event is invisible to every tenant")
-    void aPlatformWideRowIsInvisibleToEveryTenant() throws Exception {
+    @DisplayName("a platform-wide event is now readable by any tenant")
+    void aPlatformWideRowIsReadableByAnyTenant() throws Exception {
         UUID organizationId = UUID.randomUUID();
-        // Written as the migrator, which is not subject to RLS, standing in for any
-        // platform-level producer.
+        UUID eventId = UUID.randomUUID();
         try (Connection connection = migratorDataSource.getConnection()) {
-            insertOutboxRow(connection, null, "platform.maintenance.scheduled");
+            insertOutboxRow(connection, eventId, null, "platform.maintenance.scheduled");
         }
 
         try (Connection connection = appDataSource.getConnection()) {
             bindTenant(connection, organizationId);
-            assertThat(countNullOrganizationRows(connection))
-                    .as("organization_id IS NULL can never equal a tenant's id, so no "
-                            + "tenant-scoped read can publish a platform event")
-                    .isZero();
+            assertThat(countById(connection, eventId))
+                    .as("V1_015 widened reads so a relay can publish events that belong to "
+                            + "no tenant; before it this was always zero")
+                    .isEqualTo(1);
         }
     }
 
     @Test
-    @DisplayName("DEFECT: the organization table is tenant scoped too, so no tenant list is readable")
-    void theOrganizationTableIsNotAReadableTenantDirectory() throws Exception {
+    @DisplayName("widened reads do not widen writes: a tenant cannot create an ownerless event")
+    void aTenantCannotInsertAnEventThatBelongsToNoOne() throws Exception {
         UUID organizationId = UUID.randomUUID();
-        try (Connection connection = migratorDataSource.getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "insert into org_organizations (id, organization_id, name, slug)"
-                             + " values (?, ?, ?, ?)")) {
-            statement.setObject(1, organizationId);
-            statement.setObject(2, organizationId);
-            statement.setString(3, "Directory Tenant");
-            statement.setString(4, "directory-" + organizationId);
-            statement.execute();
+
+        try (Connection connection = appDataSource.getConnection()) {
+            bindTenant(connection, organizationId);
+            // USING admits NULL-organization rows, WITH CHECK does not. If this ever
+            // succeeds, a tenant can publish events that look platform-issued.
+            assertThatThrownBy(() -> insertOutboxRow(connection, UUID.randomUUID(), null,
+                    "platform.maintenance.scheduled"))
+                    .isInstanceOf(SQLException.class)
+                    .hasMessageContaining("row-level security");
         }
+    }
+
+    @Test
+    @DisplayName("the organization table is still tenant scoped")
+    void theOrganizationTableIsStillTenantScoped() throws Exception {
+        UUID organizationId = insertOrganization("still-scoped");
 
         try (Connection connection = appDataSource.getConnection();
              Statement statement = connection.createStatement();
-             ResultSet rows = statement.executeQuery("select count(*) from org_organizations")) {
+             ResultSet rows = statement.executeQuery(
+                     "select count(*) from org_organizations where id = '" + organizationId + "'")) {
             assertThat(rows.next()).isTrue();
             assertThat(rows.getInt(1))
-                    .as("org_organizations is in the strict tenant list and carries "
-                            + "check (id = organization_id), so a background job with no "
-                            + "tenant bound cannot enumerate tenants at all. Any fix that "
-                            + "iterates organizations needs a source that is not itself "
-                            + "row level scoped.")
+                    .as("org_organizations is in the strict tenant list with "
+                            + "check (id = organization_id); V1_015 deliberately did not "
+                            + "widen it, because its rows carry encryption_key_wrapped")
                     .isZero();
         }
     }
 
     @Test
-    @DisplayName("the policy is the reason, not a missing grant")
+    @DisplayName("the tenant directory is readable with no tenant bound")
+    void theTenantDirectoryIsReadableWithoutATenantBound() throws Exception {
+        UUID organizationId = insertOrganization("directory-tenant");
+
+        try (Connection connection = appDataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "select count(*) from plat_tenant_directory where organization_id = ?")) {
+            statement.setObject(1, organizationId);
+            try (ResultSet rows = statement.executeQuery()) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getInt(1))
+                        .as("the directory is what lets a background job enumerate tenants "
+                                + "and then bind each one; the trigger on org_organizations "
+                                + "put this row there")
+                        .isEqualTo(1);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("the directory holds ids only, not the organization's key material")
+    void theDirectoryCarriesNoKeyMaterial() throws Exception {
+        try (Connection connection = appDataSource.getConnection();
+             Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery(
+                     "select column_name from information_schema.columns"
+                             + " where table_name = 'plat_tenant_directory' order by column_name")) {
+            assertThat(rows.next()).isTrue();
+            assertThat(rows.getString(1)).isEqualTo("created_at");
+            assertThat(rows.next()).isTrue();
+            assertThat(rows.getString(1)).isEqualTo("organization_id");
+            assertThat(rows.next())
+                    .as("a widened read on org_organizations would have exposed "
+                            + "encryption_key_wrapped; a directory of ids does not")
+                    .isFalse();
+        }
+    }
+
+    @Test
+    @DisplayName("the block on tenant rows is the policy, not a missing grant")
     void theBlockComesFromThePolicyRatherThanPermissions() throws Exception {
         try (Connection connection = appDataSource.getConnection()) {
-            // hatis_app holds table-level SELECT; what stops it is the row policy. If this
-            // ever returns false, the diagnosis in this file is wrong and so is the fix.
             assertThat(hasTablePrivilege(connection, "hatis_app", "plat_outbox", "SELECT")).isTrue();
             assertThat(roleBypassesRls(connection, "hatis_app"))
                     .as("the migrations explicitly strip BYPASSRLS from hatis_app")
@@ -190,27 +226,29 @@ class OutboxRelayRlsIT {
         }
     }
 
-    private static int pendingCount(Statement statement) throws SQLException {
-        try (ResultSet rows = statement.executeQuery(
-                "select count(*) from plat_outbox where published_at is null"
-                        + " and (next_attempt_at is null or next_attempt_at <= now())")) {
-            assertThat(rows.next()).isTrue();
-            return rows.getInt(1);
+    private static UUID insertOrganization(String slug) throws SQLException {
+        UUID organizationId = UUID.randomUUID();
+        try (Connection connection = migratorDataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "insert into org_organizations (id, organization_id, name, slug)"
+                             + " values (?, ?, ?, ?)")) {
+            statement.setObject(1, organizationId);
+            statement.setObject(2, organizationId);
+            statement.setString(3, slug);
+            statement.setString(4, slug + "-" + organizationId);
+            statement.execute();
         }
+        return organizationId;
     }
 
-    private static int pendingCount(Connection connection) throws SQLException {
-        try (Statement statement = connection.createStatement()) {
-            return pendingCount(statement);
-        }
-    }
-
-    private static int countNullOrganizationRows(Connection connection) throws SQLException {
-        try (Statement statement = connection.createStatement();
-             ResultSet rows = statement.executeQuery(
-                     "select count(*) from plat_outbox where organization_id is null")) {
-            assertThat(rows.next()).isTrue();
-            return rows.getInt(1);
+    private static int countById(Connection connection, UUID eventId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "select count(*) from plat_outbox where id = ?")) {
+            statement.setObject(1, eventId);
+            try (ResultSet rows = statement.executeQuery()) {
+                assertThat(rows.next()).isTrue();
+                return rows.getInt(1);
+            }
         }
     }
 
@@ -239,13 +277,13 @@ class OutboxRelayRlsIT {
         }
     }
 
-    private static void insertOutboxRow(Connection connection, UUID organizationId,
+    private static void insertOutboxRow(Connection connection, UUID eventId, UUID organizationId,
                                         String eventType) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(
                 "insert into plat_outbox (id, aggregate_type, event_type, organization_id,"
                         + " occurred_at, payload) values (?, 'content_item', ?, ?, now(),"
                         + " cast(? as jsonb))")) {
-            statement.setObject(1, UUID.randomUUID());
+            statement.setObject(1, eventId);
             statement.setString(2, eventType);
             if (organizationId == null) {
                 // A platform-wide event. Typed explicitly, because setObject(i, null)
