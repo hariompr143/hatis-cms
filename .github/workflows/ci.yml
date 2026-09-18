@@ -87,7 +87,7 @@ jobs:
           {
             echo "### Backend build failed (\`${GITHUB_SHA::7}\`)"
             echo '```'
-            grep -E "ERROR|BUILD FAILURE|Tests run:|\[INFO\] Building |Caused by" /tmp/mvn.log | tail -n 180
+            grep -E "ERROR|BUILD FAILURE|Tests run:|\[INFO\] Building |Caused by|was violated|Class <|Architecture Violation" /tmp/mvn.log | tail -n 220
             echo '```'
           } > /tmp/body.md
           gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \

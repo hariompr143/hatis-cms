@@ -85,9 +85,13 @@ class HexagonalArchitectureTest {
     @DisplayName("every bounded context keeps the same internal shape")
     void contextsFollowTheSameLayout() {
         ArchRule rule = classes().that().resideInAPackage("com.hatis.platform..")
+                // The root package holds the Spring Boot composition root, which wires
+                // the contexts together and belongs to none of them. Matched without
+                // the ".." suffix so only that exact package is exempt, not the tree.
                 .and().resideOutsideOfPackages("com.hatis.platform.shared..",
                         "com.hatis.platform.architecture..",
-                        "com.hatis.platform.security..")
+                        "com.hatis.platform.security..",
+                        "com.hatis.platform")
                 .should().resideInAnyPackage(
                         "com.hatis.platform..domain..",
                         "com.hatis.platform..application..",
@@ -125,15 +129,16 @@ class HexagonalArchitectureTest {
         // Platform-wide aggregates: they deliberately carry no organization, so they
         // cannot extend the tenant-scoped base type.
         String platformWideEntities =
-                ".*\\.(User|RefreshToken|MfaEnrolment|AuditLog|Operation|OutboxEntry"
+                ".*[.$](User|RefreshToken|MfaEnrolment|AuditLog|Operation|OutboxEntry"
                         + "|IdempotencyRecord|Permission|Role)";
 
         ArchRule rule = classes().that().areAnnotatedWith(jakarta.persistence.Entity.class)
                 // haveNameNotMatching rather than haveSimpleNameNotIn: the latter has
                 // no String... overload in ArchUnit 1.3.0. The pattern is matched
-                // against the whole qualified name, so it selects on the simple name
-                // (and on nested classes of the same name, which is intended -
-                // AuthorizationEntities.Role is one of these).
+                // against the whole qualified name. The separator class is [.$] and
+                // not \. because Permission and Role are nested inside
+                // AuthorizationEntities, and matching only on '.' silently let both
+                // through as apparent violations.
                 .and().haveNameNotMatching(platformWideEntities)
                 .should().beAssignableTo(com.hatis.platform.shared.persistence.TenantScopedEntity.class);
 
