@@ -46,7 +46,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/`; image builds and Trivy exits clean at CRITICAL,HIGH (§19.6) |
 | Architecture boundaries enforced at build time | Done | `HexagonalArchitectureTest` |
 | Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`; lint, typecheck, tests and `next build` green in CI (§19.6) |
-| CI green end to end | Done | All eight jobs green in run `35352482484`. See §19.6. |
+| CI green end to end | Done | All eight jobs green in run `35355392166`. See §19.6. |
 | GitHub integration: inbound webhooks and their management | Done | `hatis-integration`; HMAC-verified push receiver plus create/connect/rotate/disconnect, 48 tests |
 | Outbound webhook security core | Done | `hatis-integration`; `WebhookUrlValidator` (SSRF target checks) and `WebhookSigner` (delivery HMAC), 50 tests. Delivery itself is not delivered — see the outbound row below. |
 | Outbound webhook persistence | Done | `WebhookEndpoint` and `WebhookDelivery` map `int_webhook_endpoints` and `int_webhook_deliveries`, including the platform's first PostgreSQL `text[]` column; `V1_014` adds the bookkeeping columns deliveries need. `WebhookEndpointPersistenceIT` round-trips both against PostgreSQL 16 under forced RLS, 9 tests. |
@@ -62,7 +62,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Workflow engine | Schema (`V1_008`) and the default template are seeded; there is no service or API. |
 | Analytics | Schema (`V1_011`) only. |
 | Notification | Schema only. |
-| Integration / outbound | Delivered end to end: an event published to the outbox is fanned out to subscribed endpoints, signed, delivered over an SSRF-guarded transport, and retried with backoff. Four caveats are open and stated rather than buried. **(1)** The address pinning that closes the DNS rebinding gap is argued from the code — no test in this repository opens a real socket. **(2)** A tenant data-key rotation invalidates endpoint secrets written under the previous key; `dek_id` records which key was used, but nothing re-encrypts yet. **(3)** `OutboxRelay` reads `plat_outbox` with no tenant context set, and that table carries forced row level security, so whether the relay can see any rows depends on the database role the application connects as — configured per environment and covered by no test. If that role lacks `BYPASSRLS`, the relay and webhook fan-out with it silently see nothing. **(4)** `WebhookDeliveryWorker` scans every organization each interval, because a cross-tenant query for due work is not expressible under row level security; the right fix is a small unsecured work-claim table. |
+| Integration / outbound | Delivered end to end: an event published to the outbox is fanned out to subscribed endpoints, signed, delivered over an SSRF-guarded transport, and retried with backoff. Four caveats are open and stated rather than buried. **(1)** The address pinning that closes the DNS rebinding gap is argued from the code — no test in this repository opens a real socket. **(2)** A tenant data-key rotation invalidates endpoint secrets written under the previous key; `dek_id` records which key was used, but nothing re-encrypts yet. **(3)** `OutboxRelay` reads `plat_outbox` with no tenant context set, and that table carries forced row level security while the migrations explicitly strip `BYPASSRLS` from `hatis_app`. `OutboxRelayRlsIT` proves against a real PostgreSQL 16 that the relay therefore sees **zero rows — no event is ever published** — and that a platform-wide event, whose `organization_id` is NULL, is invisible under every tenant. It is a characterisation test: it asserts today's behaviour so the defect stays reproducible, and it must be rewritten when the relay is fixed. The fix is a security-model choice, not a patch — a worker role that bypasses RLS, or a relay that binds each tenant in turn — and platform events additionally need a read policy admitting rows with no organization, the way `auth_roles` already does. **(4)** `WebhookDeliveryWorker` scans every organization each interval, because a cross-tenant query for due work is not expressible under row level security; the right fix is a small unsecured work-claim table. |
 | Backups | Documented (`17`); no restore drill has been executed, so the RPO/RTO figures are targets, not results. |
 | OWASP dependency-check | Runs only when an `NVD_API_KEY` secret exists; without one it skips with a notice, because dependency-check cannot fetch the NVD cache inside a job timeout unkeyed. Trivy is the gate that actually fails a build. See §19.6. |
 
@@ -90,19 +90,19 @@ customer content into a third-party model without a per-tenant control.
 
 Stated plainly, because a claim of "done" without a named check is worth nothing.
 
-**Verified in GitHub Actions, run `35352482484` on commit `e498373` — all eight jobs
+**Verified in GitHub Actions, run `35355392166` on commit `bbb8098` — all eight jobs
 green:**
 
 - **Backend (Java 21 / Spring Boot): success.** All 17 modules compile and
-  `mvn verify` completes. Run `35352482484` reports **214 tests, 0 failures, 0 errors,
-  0 skipped** across 17 classes: `StorageKeysTest` 7, `AssetTest` 16,
+  `mvn verify` completes. Run `35355392166` reports **218 tests, 0 failures, 0 errors,
+  0 skipped** across 18 classes: `StorageKeysTest` 7, `AssetTest` 16,
   `ContentBodyValidatorTest` 12, `RichTextSanitizerTest` 16, `ReleaseTest` 9,
   `HexagonalArchitectureTest` 7, `GitHubSignatureVerifierTest` 19,
   `GitHubPushEventTest` 9, `InboundWebhookServiceTest` 11, `IntegrationServiceTest` 9,
   `WebhookEndpointServiceTest` 11, `WebhookDispatcherTest` 13, `WebhookEventSinkTest` 5,
-  `WebhookUrlValidatorTest` 42, `WebhookSignerTest` 10, `WebhookEndpointPersistenceIT` 9
-  and `TenantIsolationIT` 9, the last two against a real PostgreSQL 16 under
-  Testcontainers. Those per-class numbers are
+  `WebhookUrlValidatorTest` 42, `WebhookSignerTest` 10, `WebhookEndpointPersistenceIT` 9,
+  `TenantIsolationIT` 9 and `OutboxRelayRlsIT` 4, the last three against a real
+  PostgreSQL 16 under Testcontainers. Those per-class numbers are
   published as a commit comment on every run, so the count is checkable rather than
   asserted.
 - **Build and scan container image: success.** The image builds from
