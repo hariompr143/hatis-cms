@@ -50,12 +50,20 @@ class TenantIsolationIT {
     static void migrate() throws Exception {
         migratorDataSource = dataSource(POSTGRES.getUsername(), POSTGRES.getPassword());
 
-        org.flywaydb.core.Flyway.configure()
+        org.flywaydb.core.api.output.MigrateResult result = org.flywaydb.core.Flyway.configure()
                 .dataSource(migratorDataSource)
                 .locations("classpath:db/migration")
                 .cleanDisabled(false)
                 .load()
                 .migrate();
+
+        // A migration run that applies nothing succeeds quietly, and every later
+        // assertion then fails somewhere far from the cause. Say so here instead.
+        if (result.migrationsExecuted == 0) {
+            throw new IllegalStateException("Flyway applied no migrations: "
+                    + "classpath:db/migration resolved to " + result.migrations.size()
+                    + " resolved migration(s)");
+        }
 
         // The migration creates hatis_app without a password so that an operator
         // supplies one. Tests set a throwaway value; nothing here is a credential.
