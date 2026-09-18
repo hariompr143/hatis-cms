@@ -59,10 +59,13 @@
     <spring-data.version>3.5.12</spring-data.version>
     <!-- CVE-2026-41731 -->
     <spring-kafka.version>3.3.16</spring-kafka.version>
-    <!-- CVE-2025-24813 (critical), CVE-2026-41293 (critical), CVE-2026-41284.
-         10.1.58 is what the scan cites for CVE-2026-65182 but Maven Central does not
-         carry it, so 10.1.55 is the highest published 10.1.x the scan confirms. -->
-    <tomcat.version>10.1.55</tomcat.version>
+    <!-- CVE-2025-24813 (critical), CVE-2026-41293 (critical), CVE-2026-41284,
+         CVE-2026-65182 (critical), CVE-2026-65905, CVE-2026-68525.
+         The advisory for CVE-2026-65182 names 10.1.58, but Tomcat never published that
+         version to Maven Central - its metadata jumps 10.1.57 -> 10.1.59 - so 10.1.60 is
+         used instead, being the newest 10.1.x and past the required fix. Tomcat 11 is
+         deliberately not used: it needs Servlet 6.1 and therefore Spring Boot 4. -->
+    <tomcat.version>10.1.60</tomcat.version>
     <!-- CVE-2026-75595 (critical), CVE-2026-42583, CVE-2026-42579, CVE-2026-42587 -->
     <netty.version>4.1.137.Final</netty.version>
     <!-- GHSA-r7wm-3cxj-wff9, CVE-2026-54512 -->
