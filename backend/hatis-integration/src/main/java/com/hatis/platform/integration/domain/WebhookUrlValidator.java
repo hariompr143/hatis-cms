@@ -126,15 +126,24 @@ public final class WebhookUrlValidator {
         // one public A record and one internal A record through, and the client could
         // then pick either.
         for (InetAddress address : addresses) {
-            assertAddressIsPublic(address, "webhook host");
+            String reason = reasonNotPublic(address);
+            if (reason != null) {
+                // BusinessRuleViolation, not Validation. The URL was already accepted and
+                // stored; this fires from the dispatcher, not from a request, so a 400-style
+                // "you sent something malformed" would misclassify a delivery failure — and
+                // the dispatcher needs to treat a permanent refusal differently from a
+                // timeout it should retry. The address itself is still not echoed: it
+                // describes our network layout, which the tenant does not need.
+                throw new PlatformExceptions.BusinessRuleViolation(
+                        "The webhook host resolves to " + reason
+                                + ", which the platform is not permitted to contact");
+            }
         }
     }
 
     private static void assertAddressIsPublic(InetAddress address, String field) {
         String reason = reasonNotPublic(address);
         if (reason != null) {
-            // The address itself is not echoed: it is information about our network
-            // layout, and the tenant does not need it to fix their URL.
             throw invalid("Webhook URLs may not point at " + reason, field);
         }
     }

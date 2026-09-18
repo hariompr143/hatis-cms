@@ -151,6 +151,20 @@ class WebhookUrlValidatorTest {
     }
 
     @Test
+    @DisplayName("the same address fails validation at registration and the rule at delivery")
+    void theTwoPathsDeliberatelyRaiseDifferentFailures() {
+        // Locked in on purpose. Registration is a request, so a bad URL is a Validation
+        // the caller can fix. Delivery is not a request at all, so the dispatcher needs a
+        // BusinessRuleViolation it can record as a permanent refusal rather than retry.
+        // Both used to collapse onto Validation; only this test would have noticed.
+        assertThatThrownBy(() -> WebhookUrlValidator.validate("http://169.254.169.254/x"))
+                .isInstanceOf(PlatformExceptions.Validation.class);
+        assertThatThrownBy(() -> WebhookUrlValidator.assertDeliverable("http://169.254.169.254/x"))
+                .isInstanceOf(PlatformExceptions.BusinessRuleViolation.class)
+                .isNotInstanceOf(PlatformExceptions.Validation.class);
+    }
+
+    @Test
     @DisplayName("the refusal message does not describe the platform's network layout")
     void refusalDoesNotLeakTheAddress() {
         assertThatThrownBy(() -> WebhookUrlValidator.validate("http://10.1.2.3/x"))
