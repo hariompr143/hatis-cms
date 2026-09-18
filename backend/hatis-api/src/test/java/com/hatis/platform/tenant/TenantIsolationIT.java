@@ -52,7 +52,7 @@ class TenantIsolationIT {
 
         org.flywaydb.core.api.output.MigrateResult result = org.flywaydb.core.Flyway.configure()
                 .dataSource(migratorDataSource)
-                .locations("classpath:db/migration")
+                .locations(migrationLocation())
                 .cleanDisabled(false)
                 .load()
                 .migrate();
@@ -60,9 +60,8 @@ class TenantIsolationIT {
         // A migration run that applies nothing succeeds quietly, and every later
         // assertion then fails somewhere far from the cause. Say so here instead.
         if (result.migrationsExecuted == 0) {
-            throw new IllegalStateException("Flyway applied no migrations: "
-                    + "classpath:db/migration resolved to " + result.migrations.size()
-                    + " resolved migration(s)");
+            throw new IllegalStateException("Flyway applied no migrations from "
+                    + migrationLocation());
         }
 
         // The migration creates hatis_app without a password so that an operator
@@ -72,6 +71,30 @@ class TenantIsolationIT {
             statement.execute("alter role hatis_app login password '" + APP_PASSWORD + "'");
         }
         appDataSource = dataSource("hatis_app", APP_PASSWORD);
+    }
+
+    /**
+     * Where the migration scripts are read from.
+     *
+     * <p>The scripts are read from the module's source tree, because Flyway's
+     * classpath scanner resolves nothing under the runner's classloader and then
+     * reports success having applied no migrations. Reading the files directly is
+     * deterministic, and it is the same set of files the application packages -
+     * validating them is the whole point of this test. The classpath location the
+     * application itself uses is kept as a fallback for a checkout laid out
+     * differently. The relative path depends on the working directory given to the
+     * runner, so both the module directory and the repository root are tried.
+     */
+    private static String migrationLocation() {
+        for (String candidate : new String[]{
+                "src/main/resources/db/migration",
+                "backend/hatis-api/src/main/resources/db/migration"}) {
+            java.nio.file.Path path = java.nio.file.Path.of(candidate);
+            if (java.nio.file.Files.isDirectory(path)) {
+                return "filesystem:" + path.toAbsolutePath();
+            }
+        }
+        return "classpath:db/migration";
     }
 
     private static PGSimpleDataSource dataSource(String user, String password) {

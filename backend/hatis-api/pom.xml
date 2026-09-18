@@ -138,6 +138,14 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-failsafe-plugin</artifactId>
+        <configuration>
+          <!-- Flyway scans classpath: locations through the classloader. The
+               manifest-only jar failsafe builds by default hides directory entries
+               from it, so db/migration resolves to nothing and Flyway reports
+               success having applied no migrations. -->
+          <useSystemClassLoader>true</useSystemClassLoader>
+          <useManifestOnlyJar>false</useManifestOnlyJar>
+        </configuration>
         <executions>
           <execution>
             <goals>
