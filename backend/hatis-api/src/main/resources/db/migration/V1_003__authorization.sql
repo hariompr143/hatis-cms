@@ -114,8 +114,18 @@ insert into auth_permissions (id, code, description, resource_type, action, clas
     (gen_random_uuid(), 'integration:read',       'Read integrations and webhooks',   'integration',  'read',   'CONFIDENTIAL'),
     (gen_random_uuid(), 'integration:write',      'Configure integrations',           'integration',  'write',  'RESTRICTED');
 
-with system_roles(code, name, description, perms) as (
-    values
+-- A temp table rather than a CTE: the role/permission mapping below is a
+-- second statement, and a CTE is scoped to the single statement it opens.
+-- Referencing it from the next statement fails with "relation does not exist".
+create temp table system_roles (
+    code        text not null,
+    name        text not null,
+    description text not null,
+    perms       text not null
+) on commit drop;
+
+insert into system_roles (code, name, description, perms)
+values
         ('OWNER',              'Owner',              'Full control of the organization, including transfer and closure', '*'),
         ('ORG_ADMIN',          'Organization Admin', 'Manage members, projects, environments and integrations',
             'organization:read,organization:write,project:read,project:write,environment:read,environment:write,member:read,member:write,role:read,role:write,api_key:read,api_key:write,audit:read,cms:content:read,cms:content:write,cms:content:submit,cms:content:approve,cms:content:publish,cms:type:write,asset:read,asset:write,asset:delete,deployment:read,deployment:write,deployment:rollback,config:read,config:write,domain:read,domain:write,database:read,storage:read,analytics:read,analytics:write,billing:read,integration:read,integration:write'),
@@ -131,7 +141,8 @@ with system_roles(code, name, description, perms) as (
             'project:read,analytics:read,analytics:write,cms:content:read,asset:read'),
         ('VIEWER',             'Viewer',             'Read-only access within the bound scope',
             'organization:read,project:read,environment:read,cms:content:read,asset:read,deployment:read,analytics:read,domain:read,database:read,storage:read,billing:read')
-)
+;
+
 insert into auth_roles (id, organization_id, code, name, description, system)
 select gen_random_uuid(), null, code, name, description, true from system_roles;
 
