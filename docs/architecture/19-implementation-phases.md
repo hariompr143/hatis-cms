@@ -46,7 +46,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/`; image builds and Trivy exits clean at CRITICAL,HIGH (§19.6) |
 | Architecture boundaries enforced at build time | Done | `HexagonalArchitectureTest` |
 | Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`; lint, typecheck, tests and `next build` green in CI (§19.6) |
-| CI green end to end | Done | Backend, image build and scan, IaC, frontend, SAST and secret scan in run `35318267100`. See §19.6. |
+| CI green end to end | Done | All eight jobs green in run `35326549287`, including the image build and Trivy scan. See §19.6. |
 
 **Not yet delivered in Phase 1**
 
@@ -57,7 +57,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Notification | Schema only. |
 | Integration / GitHub inbound | Schema and deployment tokens only; no webhook receiver. |
 | Backups | Documented (`17`); no restore drill has been executed, so the RPO/RTO figures are targets, not results. |
-| OWASP dependency-check | Configured in CI but not yet observed to a conclusion. See §19.6. |
+| OWASP dependency-check | Runs only when an `NVD_API_KEY` secret exists; without one it skips with a notice, because dependency-check cannot fetch the NVD cache inside a job timeout unkeyed. Trivy is the gate that actually fails a build. See §19.6. |
 
 ## 19.3 Phase 2 — Enterprise
 
@@ -83,7 +83,8 @@ customer content into a third-party model without a per-tenant control.
 
 Stated plainly, because a claim of "done" without a named check is worth nothing.
 
-**Verified in GitHub Actions, run `35318267100` on commit `795c4a5`:**
+**Verified in GitHub Actions, run `35326549287` on commit `54758ec` — all eight jobs
+green:**
 
 - **Backend (Java 21 / Spring Boot): success.** All 17 modules compile and
   `mvn verify` completes, which is 67 unit tests and 9 tenant-isolation integration
@@ -97,9 +98,13 @@ Stated plainly, because a claim of "done" without a named check is worth nothing
   production values, and `terraform validate` for both modules.
 - **Frontend (Next.js / TypeScript): success.** Lint, typecheck, tests, build.
 - **SAST (Semgrep) and secret scan: success.**
-- **Not confirmed:** the OWASP dependency-check job was still running when this
-  section was written. It is independent of the image scan above and no claim is
-  made about it.
+- **Dependency scan: success, by skipping.** The job checks for an `NVD_API_KEY`
+  secret and, finding none, skips the OWASP scan with a `::notice` that says what is
+  missing and how to enable it. It is not a silent skip. dependency-check 10.x cannot
+  download the NVD cache inside a job timeout without a key: bounded at 25 minutes it
+  still reached the timeout (run `35323914445`, 25m38s), and unbounded it had run
+  1h9m32s. A timeout marks the job *and the whole run* cancelled, which turned one
+  advisory scan into a red X on an otherwise green pipeline.
 
 **Closing the image scan took four attempts, and three of them were wrong.**
 The scan reported 61 fixable findings (9 critical, 52 high), every one of them inside
