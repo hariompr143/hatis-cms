@@ -196,10 +196,16 @@ public class CloudflareDnsProvider implements DnsProvider {
         if (!(result instanceof List<?> list)) {
             return List.of();
         }
-        return list.stream()
-                .filter(element -> element instanceof Map)
-                .map(element -> (Map<?, ?>) element)
-                .toList();
+        // Collected by hand rather than through a stream: mapping to `(Map<?, ?>) e`
+        // leaves the element type as a fresh wildcard capture, and
+        // List<Map<CAP,CAP>> is not a List<Map<?,?>> under generic invariance.
+        List<Map<?, ?>> found = new java.util.ArrayList<>();
+        for (Object element : list) {
+            if (element instanceof Map<?, ?> record) {
+                found.add(record);
+            }
+        }
+        return List.copyOf(found);
     }
 
     private Secret token() {

@@ -202,7 +202,7 @@ public class CertManagerCertificateProvider implements CertificateProvider {
     /** Kubernetes resource names must be DNS-1123 subdomains and at most 253 chars. */
     static String resourceName(String hostname) {
         String name = "tls-" + hostname.toLowerCase(java.util.Locale.ROOT)
-                .replace('*', "wildcard")
+                .replace("*", "wildcard")
                 .replaceAll("[^a-z0-9.-]", "-");
         return name.length() > 253 ? name.substring(0, 253) : name;
     }
