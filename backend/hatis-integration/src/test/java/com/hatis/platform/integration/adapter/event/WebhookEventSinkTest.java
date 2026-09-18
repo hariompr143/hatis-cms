@@ -37,7 +37,13 @@ class WebhookEventSinkTest {
     private static final String EVENT_TYPE = "content.published";
 
     private final UUID organizationId = UUID.randomUUID();
-    private final UUID eventId = UUID.randomUUID();
+
+    /**
+     * Built once, in setUp, because PlatformEvent.build() assigns its own eventId. Asserting
+     * against a UUID minted by the test would never match the one the sink actually used -
+     * which is exactly the mistake this test originally made.
+     */
+    private PlatformEvent event;
 
     @Mock
     private WebhookDeliveryLog deliveryLog;
@@ -49,6 +55,10 @@ class WebhookEventSinkTest {
         // Built here rather than in a field initializer: @Mock fields are still null while
         // the test instance is being constructed, so the sink would have captured null.
         sink = new WebhookEventSink(deliveryLog);
+        event = PlatformEvent.of(EVENT_TYPE, organizationId)
+                .resource("content_item", UUID.randomUUID())
+                .data(Map.of("id", "c-1"))
+                .build();
     }
 
     @AfterEach
@@ -65,10 +75,10 @@ class WebhookEventSinkTest {
                 target(first, List.of(EVENT_TYPE)),
                 target(second, List.of())));
 
-        sink.send(event());
+        sink.send(event);
 
-        verify(deliveryLog).open(eq(first), eq(eventId), eq(EVENT_TYPE));
-        verify(deliveryLog).open(eq(second), eq(eventId), eq(EVENT_TYPE));
+        verify(deliveryLog).open(eq(first), eq(event.eventId()), eq(EVENT_TYPE));
+        verify(deliveryLog).open(eq(second), eq(event.eventId()), eq(EVENT_TYPE));
     }
 
     @Test
@@ -78,7 +88,7 @@ class WebhookEventSinkTest {
         when(deliveryLog.activeTargets())
                 .thenReturn(List.of(target(other, List.of("asset.deleted"))));
 
-        sink.send(event());
+        sink.send(event);
 
         verify(deliveryLog, never()).open(any(), any(), any());
     }
@@ -108,11 +118,11 @@ class WebhookEventSinkTest {
         doThrow(new IllegalStateException("row locked"))
                 .when(deliveryLog).open(eq(broken), any(), any());
 
-        sink.send(event());
+        sink.send(event);
 
         // The sink does not throw: the relay would retry the whole entry, re-publishing to
         // every other sink and re-opening the deliveries that did succeed.
-        verify(deliveryLog).open(eq(healthy), eq(eventId), eq(EVENT_TYPE));
+        verify(deliveryLog).open(eq(healthy), eq(event.eventId()), eq(EVENT_TYPE));
     }
 
     @Test
@@ -124,12 +134,5 @@ class WebhookEventSinkTest {
     private WebhookDeliveryLog.Target target(UUID endpointId, List<String> events) {
         return new WebhookDeliveryLog.Target(endpointId, "https://hooks.acme.example/hatis",
                 events, true, "ciphertext", "key-1");
-    }
-
-    private PlatformEvent event() {
-        return PlatformEvent.of(EVENT_TYPE, organizationId)
-                .resource("content_item", UUID.randomUUID())
-                .data(Map.of("id", "c-1"))
-                .build();
     }
 }
