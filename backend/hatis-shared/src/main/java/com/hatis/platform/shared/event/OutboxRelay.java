@@ -16,7 +16,9 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Drains the transactional outbox into the configured {@link EventSink}.
@@ -33,28 +35,36 @@ public class OutboxRelay {
     private static final Logger log = LoggerFactory.getLogger(OutboxRelay.class);
 
     private final OutboxRepository outbox;
-    private final EventSink sink;
+    private final List<EventSink> sinks;
     private final ObjectMapper objectMapper;
     private final PlatformProperties properties;
-    private final Counter published;
-    private final Counter failed;
+    private final Map<String, Counter> published;
+    private final Map<String, Counter> failed;
     private final Timer batchDuration;
 
+    /**
+     * @param sinks every sink an event must reach, not one of them. An event legitimately
+     *              goes to Kafka <em>and</em> out to customer webhooks, and taking a single
+     *              sink would force one to be chosen at wiring time. Each sink is a bean;
+     *              a deployment with neither still starts, and simply publishes nowhere.
+     */
     public OutboxRelay(OutboxRepository outbox,
-                       EventSink sink,
+                       List<EventSink> sinks,
                        ObjectMapper objectMapper,
                        PlatformProperties properties,
                        MeterRegistry meterRegistry) {
         this.outbox = outbox;
-        this.sink = sink;
+        this.sinks = List.copyOf(sinks);
         this.objectMapper = objectMapper;
         this.properties = properties;
-        this.published = Counter.builder("hatis.events.published")
-                .tag("sink", sink.name())
-                .register(meterRegistry);
-        this.failed = Counter.builder("hatis.events.publish_failures")
-                .tag("sink", sink.name())
-                .register(meterRegistry);
+        this.published = new LinkedHashMap<>();
+        this.failed = new LinkedHashMap<>();
+        for (EventSink sink : this.sinks) {
+            published.put(sink.name(), Counter.builder("hatis.events.published")
+                    .tag("sink", sink.name()).register(meterRegistry));
+            failed.put(sink.name(), Counter.builder("hatis.events.publish_failures")
+                    .tag("sink", sink.name()).register(meterRegistry));
+        }
         this.batchDuration = Timer.builder("hatis.events.relay.duration").register(meterRegistry);
     }
 
@@ -82,10 +92,19 @@ public class OutboxRelay {
         }
         try {
             PlatformEvent event = objectMapper.readValue(entry.getPayload(), PlatformEvent.class);
-            sink.send(event);
+            // A failure in any sink fails the entry, so it is retried as a whole rather
+            // than marked published with some sinks silently never having seen it.
+            for (EventSink sink : sinks) {
+                try {
+                    sink.send(event);
+                    published.get(sink.name()).increment();
+                } catch (RuntimeException e) {
+                    failed.get(sink.name()).increment();
+                    throw e;
+                }
+            }
             entry.markPublished();
             outbox.save(entry);
-            published.increment();
         } catch (Exception e) {
             failed.increment();
             entry.markFailedAttempt();

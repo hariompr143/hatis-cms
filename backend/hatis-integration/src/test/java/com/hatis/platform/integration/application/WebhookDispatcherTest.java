@@ -260,6 +260,46 @@ class WebhookDispatcherTest {
         verify(transport, never()).deliver(any());
     }
 
+    @Test
+    @DisplayName("first attempts come from the unattempted queue, not the retry queue")
+    void firstAttemptsUseTheUnattemptedQueue() {
+        UUID deliveryId = UUID.randomUUID();
+        when(deliveryLog.unattempted(anyInt())).thenReturn(List.of(
+                new WebhookDeliveryLog.Due(deliveryId, UUID.randomUUID(), eventId, 0)));
+        when(deliveryLog.target(any())).thenReturn(
+                Optional.of(target(UUID.randomUUID(), List.of(EVENT_TYPE))));
+        stubEvent();
+        stubKeyAndSecret();
+        when(transport.deliver(any())).thenReturn(WebhookTransport.Outcome.delivered(200));
+
+        int processed = dispatcher.deliverPending(organizationId, 10);
+
+        assertThat(processed).isEqualTo(1);
+        verify(deliveryLog).recordDelivered(eq(deliveryId), eq(200), any(Instant.class));
+        // A freshly opened delivery has no next_attempt_at, so the retry query would never
+        // select it and the event would sit undelivered forever.
+        verify(deliveryLog, never()).dueBefore(any(), anyInt());
+    }
+
+    @Test
+    @DisplayName("a first attempt for a paused endpoint is skipped rather than left queued")
+    void firstAttemptForAPausedEndpointIsSkipped() {
+        UUID deliveryId = UUID.randomUUID();
+        UUID endpointId = UUID.randomUUID();
+        when(deliveryLog.unattempted(anyInt())).thenReturn(List.of(
+                new WebhookDeliveryLog.Due(deliveryId, endpointId, eventId, 0)));
+        when(deliveryLog.target(endpointId)).thenReturn(Optional.of(
+                new WebhookDeliveryLog.Target(endpointId, "https://hooks.acme.example/hatis",
+                        List.of(EVENT_TYPE), false, "ct", "key-1")));
+        when(tenantKeys.keyForOrganization(organizationId))
+                .thenReturn(new TenantKeyService.TenantKey("wdek", "key-1"));
+
+        dispatcher.deliverPending(organizationId, 10);
+
+        verify(deliveryLog).recordSkipped(eq(deliveryId), any());
+        verify(transport, never()).deliver(any());
+    }
+
     private WebhookTransport.Request capturedRequest() {
         ArgumentCaptor<WebhookTransport.Request> captor =
                 ArgumentCaptor.forClass(WebhookTransport.Request.class);

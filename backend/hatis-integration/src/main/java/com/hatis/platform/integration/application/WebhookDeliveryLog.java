@@ -111,6 +111,19 @@ public class WebhookDeliveryLog {
                 .toList();
     }
 
+    /** Deliveries opened by the event sink and not yet attempted, oldest first. */
+    @TenantTransactional
+    public List<Due> unattempted(int limit) {
+        UUID organizationId = TenantContextHolder.require().requireOrganizationId();
+        return deliveries
+                .findByOrganizationIdAndStatusAndAttemptsAndNextAttemptAtIsNullOrderByCreatedAtAsc(
+                        organizationId, WebhookDelivery.Status.PENDING, 0)
+                .stream()
+                .limit(limit)
+                .map(d -> new Due(d.getId(), d.getEndpointId(), d.getEventId(), d.getAttempts()))
+                .toList();
+    }
+
     private void mutate(UUID deliveryId, java.util.function.Consumer<WebhookDelivery> change) {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
         WebhookDelivery delivery = deliveries.findByIdAndOrganizationId(deliveryId, organizationId)

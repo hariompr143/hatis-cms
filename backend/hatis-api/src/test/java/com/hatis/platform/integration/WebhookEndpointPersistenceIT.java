@@ -418,6 +418,14 @@ class WebhookEndpointPersistenceIT {
             Instant alreadyPast = Instant.now().minusSeconds(120);
             assertThat(deliveries.findByOrganizationIdAndStatusAndNextAttemptAtBefore(
                     org, WebhookDelivery.Status.PENDING, alreadyPast)).isEmpty();
+
+            // The first-attempt queue. Only the third row qualifies: the first is
+            // delivered, the second has a scheduled retry. If this returned nothing the
+            // event would sit undelivered forever, and the finder name is long enough
+            // that a typo in it is not a compile error.
+            assertThat(deliveries
+                    .findByOrganizationIdAndStatusAndAttemptsAndNextAttemptAtIsNullOrderByCreatedAtAsc(
+                            org, WebhookDelivery.Status.PENDING, 0)).hasSize(1);
             return null;
         });
     }

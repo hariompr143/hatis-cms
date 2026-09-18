@@ -83,6 +83,17 @@ public interface IntegrationRepositories {
         List<WebhookDelivery> findByOrganizationIdAndStatusAndNextAttemptAtBefore(
                 UUID organizationId, WebhookDelivery.Status status, Instant cutoff);
 
+        /**
+         * Deliveries that have been opened but never attempted, oldest first.
+         *
+         * <p>Deliberately separate from the retry query rather than folded into it: a row
+         * with {@code attempts = 0} and no {@code next_attempt_at} is waiting for its first
+         * attempt, while the retry query's {@code next_attempt_at} predicate would skip it
+         * forever and the event would never be delivered at all.
+         */
+        List<WebhookDelivery> findByOrganizationIdAndStatusAndAttemptsAndNextAttemptAtIsNullOrderByCreatedAtAsc(
+                UUID organizationId, WebhookDelivery.Status status, int attempts);
+
         long countByEndpointIdAndOrganizationIdAndStatus(UUID endpointId, UUID organizationId,
                                                          WebhookDelivery.Status status);
     }

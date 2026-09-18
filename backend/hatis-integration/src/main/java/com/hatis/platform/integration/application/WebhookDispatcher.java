@@ -114,42 +114,63 @@ public class WebhookDispatcher {
     }
 
     /**
+     * Makes the first attempt on the deliveries the event sink opened for one organization.
+     *
+     * <p>This is a separate queue from {@link #retryDue}, not a wider version of it. A
+     * freshly opened delivery has no {@code next_attempt_at}, so a retry-style query would
+     * never select it and the event would sit undelivered forever.
+     *
+     * @return how many deliveries were attempted or closed out
+     */
+    public int deliverPending(UUID organizationId, int limit) {
+        return TenantContextHolder.callAs(contextFor(organizationId), () ->
+                process(deliveryLog.unattempted(limit), organizationId));
+    }
+
+    /**
      * Retries the deliveries of one organization that have come due.
      *
      * @return how many deliveries were attempted or closed out
      */
     public int retryDue(UUID organizationId, Instant now, int limit) {
-        return TenantContextHolder.callAs(contextFor(organizationId), () -> {
-            List<WebhookDeliveryLog.Due> due = deliveryLog.dueBefore(now, limit);
-            if (due.isEmpty()) {
-                return 0;
-            }
-            TenantKeyService.TenantKey key = tenantKeys.keyForOrganization(organizationId);
-            int processed = 0;
-            for (WebhookDeliveryLog.Due pending : due) {
-                Optional<WebhookDeliveryLog.Target> target =
-                        deliveryLog.target(pending.endpointId());
-                if (target.isEmpty() || !target.get().active()) {
-                    // Paused or deleted. Retrying would be pointless, and leaving it
-                    // PENDING would keep it in the queue forever.
-                    deliveryLog.recordSkipped(pending.deliveryId(),
-                            "the endpoint no longer accepts deliveries");
-                    processed++;
-                    continue;
-                }
-                WebhookDeliveryLog.Event event = deliveryLog.event(pending.eventId());
-                if (event == null) {
-                    deliveryLog.recordSkipped(pending.deliveryId(),
-                            "the event is no longer available to deliver");
-                    processed++;
-                    continue;
-                }
-                attempt(organizationId, pending.deliveryId(), target.get(), event,
-                        pending.attempts(), key);
+        return TenantContextHolder.callAs(contextFor(organizationId), () ->
+                process(deliveryLog.dueBefore(now, limit), organizationId));
+    }
+
+    /**
+     * Works one queue, whether it holds first attempts or retries.
+     *
+     * <p>Each entry is resolved inside its own short transaction and sent outside any
+     * transaction, so a slow endpoint holds nothing while it is being slow.
+     */
+    private int process(List<WebhookDeliveryLog.Due> queue, UUID organizationId) {
+        if (queue.isEmpty()) {
+            return 0;
+        }
+        TenantKeyService.TenantKey key = tenantKeys.keyForOrganization(organizationId);
+        int processed = 0;
+        for (WebhookDeliveryLog.Due pending : queue) {
+            Optional<WebhookDeliveryLog.Target> target = deliveryLog.target(pending.endpointId());
+            if (target.isEmpty() || !target.get().active()) {
+                // Paused or deleted. Retrying would be pointless, and leaving it PENDING
+                // would keep it in the queue forever.
+                deliveryLog.recordSkipped(pending.deliveryId(),
+                        "the endpoint no longer accepts deliveries");
                 processed++;
+                continue;
             }
-            return processed;
-        });
+            WebhookDeliveryLog.Event event = deliveryLog.event(pending.eventId());
+            if (event == null) {
+                deliveryLog.recordSkipped(pending.deliveryId(),
+                        "the event is no longer available to deliver");
+                processed++;
+                continue;
+            }
+            attempt(organizationId, pending.deliveryId(), target.get(), event,
+                    pending.attempts(), key);
+            processed++;
+        }
+        return processed;
     }
 
     private void attempt(UUID organizationId, UUID deliveryId, WebhookDeliveryLog.Target target,
