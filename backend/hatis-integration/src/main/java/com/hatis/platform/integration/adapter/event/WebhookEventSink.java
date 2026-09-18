@@ -16,7 +16,7 @@ import java.util.UUID;
  *
  * <h2>This only opens delivery records — it never sends</h2>
  *
- * {@code send} runs inside {@code OutboxRelay}'s transaction, and a database transaction
+ * {@code send} runs inside {@code OutboxWork}'s per-entry transaction, and a database transaction
  * must not be held open across an HTTP call to a customer's endpoint. So the sink does the
  * cheap, transactional half: find the endpoints subscribed to this event and open a PENDING
  * delivery for each. The sending is done later, outside any transaction, by

@@ -42,13 +42,27 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *       no row level security, so a job can enumerate tenants and then bind each one.</li>
  * </ul>
  *
+ * <h2>What V1_016 then had to fix</h2>
+ *
+ * A widened {@code USING} with a strict {@code WITH CHECK} is worse than either on its own:
+ * the relay could <em>read</em> a platform-wide row but not record that it had published it,
+ * because {@code WITH CHECK} is evaluated against the new row version on every update and
+ * {@code organization_id = <tenant>} is never true for a NULL. The row would be republished
+ * on every sweep, forever. {@code V1_016} splits the single {@code FOR ALL} policy into one
+ * policy per command: reads and delivery bookkeeping admit ownerless rows, inserts do not.
+ * {@link #aPlatformWideRowCanBeMarkedPublishedUnbound} and
+ * {@link #aTenantStillCannotInsertAnEventThatBelongsToNoOne} hold the two halves apart.
+ *
  * <h2>What is still true, and constrains the relay</h2>
  *
  * A query with no tenant bound still sees no tenant-owned rows. That is correct and must
- * stay correct; it means {@code OutboxRelay} cannot simply call {@code findPending}, and
- * has to walk {@code plat_tenant_directory} and bind each tenant in turn.
+ * stay correct; it is why {@code OutboxRelay} walks {@code plat_tenant_directory} and
+ * binds each tenant in turn rather than asking for the whole queue at once, and why the
+ * "everything pending, whichever tenant it belongs to" query on {@code OutboxRepository}
+ * was deleted instead of being left unused — an unused query that silently returns nothing
+ * is how the relay came to publish no events at all.
  * {@link #anUnboundQueryStillSeesNoTenantOwnedRows} is the test that would fail if anyone
- * "fixed" the relay by weakening this instead.
+ * "fixed" a future relay by weakening this instead.
  */
 @Testcontainers
 @DisplayName("Row level security, the transactional outbox and the tenant directory")
@@ -216,6 +230,71 @@ class OutboxRelayRlsIT {
     }
 
     @Test
+    @DisplayName("a platform-wide row can be marked published by a relay with no tenant bound")
+    void aPlatformWideRowCanBeMarkedPublishedUnbound() throws Exception {
+        UUID eventId = UUID.randomUUID();
+        try (Connection connection = migratorDataSource.getConnection()) {
+            insertOutboxRow(connection, eventId, null, "platform.maintenance.scheduled");
+        }
+
+        try (Connection connection = appDataSource.getConnection()) {
+            assertThat(connection.getAutoCommit())
+                    .as("no tenant bound, which is the state the relay runs the platform "
+                            + "pass in")
+                    .isTrue();
+            assertThat(updatePublishedAt(connection, eventId))
+                    .as("V1_016 lets the update through; before it, WITH CHECK rejected the "
+                            + "new row version and the entry would be republished forever")
+                    .isEqualTo(1);
+            assertThat(publishedAtIsNull(connection, eventId)).isFalse();
+        }
+    }
+
+    @Test
+    @DisplayName("an unbound relay still cannot touch a tenant's row")
+    void anUnboundRelayCannotReachATenantsRow() throws Exception {
+        UUID organizationId = UUID.randomUUID();
+        UUID eventId = UUID.randomUUID();
+        try (Connection connection = appDataSource.getConnection()) {
+            bindTenant(connection, organizationId);
+            insertOutboxRow(connection, eventId, organizationId, "content.published");
+            connection.commit();
+        }
+
+        try (Connection connection = appDataSource.getConnection()) {
+            assertThat(updatePublishedAt(connection, eventId))
+                    .as("widening the write path for ownerless rows must not widen it for "
+                            + "rows that have an owner")
+                    .isZero();
+            assertThat(countById(connection, eventId))
+                    .as("and it must not widen reads either: the row is not merely "
+                            + "unwritable from here, it is invisible")
+                    .isZero();
+        }
+    }
+
+    @Test
+    @DisplayName("one tenant cannot mark another tenant's entry published")
+    void oneTenantCannotPublishAnotherTenantsEntry() throws Exception {
+        UUID owner = UUID.randomUUID();
+        UUID intruder = UUID.randomUUID();
+        UUID eventId = UUID.randomUUID();
+        try (Connection connection = appDataSource.getConnection()) {
+            bindTenant(connection, owner);
+            insertOutboxRow(connection, eventId, owner, "content.published");
+            connection.commit();
+        }
+
+        try (Connection connection = appDataSource.getConnection()) {
+            bindTenant(connection, intruder);
+            assertThat(updatePublishedAt(connection, eventId))
+                    .as("an update that matches no visible row affects zero rows; RLS does "
+                            + "not raise, it filters")
+                    .isZero();
+        }
+    }
+
+    @Test
     @DisplayName("the block on tenant rows is the policy, not a missing grant")
     void theBlockComesFromThePolicyRatherThanPermissions() throws Exception {
         try (Connection connection = appDataSource.getConnection()) {
@@ -248,6 +327,30 @@ class OutboxRelayRlsIT {
             try (ResultSet rows = statement.executeQuery()) {
                 assertThat(rows.next()).isTrue();
                 return rows.getInt(1);
+            }
+        }
+    }
+
+    private static int updatePublishedAt(Connection connection, UUID eventId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "update plat_outbox set published_at = now() where id = ?")) {
+            statement.setObject(1, eventId);
+            return statement.executeUpdate();
+        }
+    }
+
+    /**
+     * Reads back through the caller's own policy, so for a row the caller cannot see this
+     * reports "unpublished" rather than the owner's value. Every caller of this method
+     * states which of the two it means.
+     */
+    private static boolean publishedAtIsNull(Connection connection, UUID eventId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "select count(*) from plat_outbox where id = ? and published_at is null")) {
+            statement.setObject(1, eventId);
+            try (ResultSet rows = statement.executeQuery()) {
+                assertThat(rows.next()).isTrue();
+                return rows.getInt(1) == 1;
             }
         }
     }

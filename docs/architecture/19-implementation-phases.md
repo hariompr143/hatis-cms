@@ -46,7 +46,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/`; image builds and Trivy exits clean at CRITICAL,HIGH (§19.6) |
 | Architecture boundaries enforced at build time | Done | `HexagonalArchitectureTest` |
 | Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`; lint, typecheck, tests and `next build` green in CI (§19.6) |
-| CI green end to end | Done | All eight jobs green in run `35355392166`. See §19.6. |
+| CI green end to end | Done | All eight jobs green in run `35378165094`. See §19.6. |
 | GitHub integration: inbound webhooks and their management | Done | `hatis-integration`; HMAC-verified push receiver plus create/connect/rotate/disconnect, 48 tests |
 | Outbound webhook security core | Done | `hatis-integration`; `WebhookUrlValidator` (SSRF target checks) and `WebhookSigner` (delivery HMAC), 50 tests. Delivery itself is not delivered — see the outbound row below. |
 | Outbound webhook persistence | Done | `WebhookEndpoint` and `WebhookDelivery` map `int_webhook_endpoints` and `int_webhook_deliveries`, including the platform's first PostgreSQL `text[]` column; `V1_014` adds the bookkeeping columns deliveries need. `WebhookEndpointPersistenceIT` round-trips both against PostgreSQL 16 under forced RLS, 9 tests. |
@@ -62,7 +62,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Workflow engine | Schema (`V1_008`) and the default template are seeded; there is no service or API. |
 | Analytics | Schema (`V1_011`) only. |
 | Notification | Schema only. |
-| Integration / outbound | Delivered end to end: an event published to the outbox is fanned out to subscribed endpoints, signed, delivered over an SSRF-guarded transport, and retried with backoff. Four caveats are open and stated rather than buried. **(1)** The address pinning that closes the DNS rebinding gap is argued from the code — no test in this repository opens a real socket. **(2)** A tenant data-key rotation invalidates endpoint secrets written under the previous key; `dek_id` records which key was used, but nothing re-encrypts yet. **(3)** `OutboxRelay` reads `plat_outbox` with no tenant context set, and that table carries forced row level security while the migrations explicitly strip `BYPASSRLS` from `hatis_app`. `OutboxRelayRlsIT` proves against a real PostgreSQL 16 that the relay therefore sees **zero rows — no event is ever published** — and that a platform-wide event, whose `organization_id` is NULL, is invisible under every tenant. It is a characterisation test: it asserts today's behaviour so the defect stays reproducible, and it must be rewritten when the relay is fixed. The fix is a security-model choice, not a patch — a worker role that bypasses RLS, or a relay that binds each tenant in turn — and platform events additionally need a read policy admitting rows with no organization, the way `auth_roles` already does. **(4)** Background jobs cannot enumerate tenants from `org_organizations` — it is in the strict tenant list, so an unbound query returns zero rows. `V1_015` adds `plat_tenant_directory` (ids only, no row level security, kept in sync by a trigger) and `WebhookDeliveryWorker` now reads it. **`OutboxRelay` still does not**: it calls `findPending` unbound and so still publishes nothing, including the platform events `V1_015` just made readable. That is the remaining half of the fix. |
+| Integration / outbound | Delivered end to end: an event published to the outbox is drained per tenant, fanned out to subscribed endpoints, signed, delivered over an SSRF-guarded transport, and retried with backoff. Three caveats are open and stated rather than buried. **(1)** The address pinning that closes the DNS rebinding gap is argued from the code — no test in this repository opens a real socket. **(2)** A tenant data-key rotation invalidates endpoint secrets written under the previous key; `dek_id` records which key was used, but nothing re-encrypts yet. **(3)** Both background jobs walk every tenant on a fixed interval, which is the wrong shape at a few thousand organizations: most sweeps run one empty query per organization with no queued work. The replacement is a work-claim table listing only organizations with outstanding work; it is not built. Two further items were open and are now closed. `OutboxRelay` used to read `plat_outbox` with no tenant context set — that table carries forced row level security and the migrations explicitly strip `BYPASSRLS` from `hatis_app`, so the query returned an empty list rather than an error, and **no event was ever published** while every metric looked healthy. It is now two beans: `OutboxRelay` walks `plat_tenant_directory`, binds each tenant in turn, and runs a separate unbound pass for platform-wide rows, while `OutboxWork` does the reading and publishing inside that tenant's transaction. The split is the fix, not tidying — Spring applies `@TenantTransactional` through a proxy, so a bean calling its own transactional method gets no transaction and no tenant setting at all, and there is no `@SpringBootTest` in this repository that would have caught a self-injected proxy being wrong. `OutboxRelayRlsIT` pins the database behaviour against a real PostgreSQL 16; `OutboxRelayTest` and `OutboxWorkTest` pin that work is claimed across a bean boundary and that a failed entry stays queued. Background jobs could not enumerate tenants from `org_organizations` — it is in the strict tenant list — so `V1_015` adds `plat_tenant_directory` (ids only, no row level security, kept in sync by a trigger). `V1_016` then splits the outbox policy into one policy per command, because `V1_015`'s widened read combined with a strict write left a platform-wide row readable but never publishable, which would have republished it on every sweep forever. |
 | Backups | Documented (`17`); no restore drill has been executed, so the RPO/RTO figures are targets, not results. |
 | OWASP dependency-check | Runs only when an `NVD_API_KEY` secret exists; without one it skips with a notice, because dependency-check cannot fetch the NVD cache inside a job timeout unkeyed. Trivy is the gate that actually fails a build. See §19.6. |
 
@@ -90,21 +90,23 @@ customer content into a third-party model without a per-tenant control.
 
 Stated plainly, because a claim of "done" without a named check is worth nothing.
 
-**Verified in GitHub Actions, run `35355392166` on commit `bbb8098` — all eight jobs
+**Verified in GitHub Actions, run `35378165094` on commit `cd6872f` — all eight jobs
 green:**
 
 - **Backend (Java 21 / Spring Boot): success.** All 17 modules compile and
-  `mvn verify` completes. Run `35355392166` reports **218 tests, 0 failures, 0 errors,
+  `mvn verify` completes. Run `35378165094` reports **222 tests, 0 failures, 0 errors,
   0 skipped** across 18 classes: `StorageKeysTest` 7, `AssetTest` 16,
   `ContentBodyValidatorTest` 12, `RichTextSanitizerTest` 16, `ReleaseTest` 9,
   `HexagonalArchitectureTest` 7, `GitHubSignatureVerifierTest` 19,
   `GitHubPushEventTest` 9, `InboundWebhookServiceTest` 11, `IntegrationServiceTest` 9,
   `WebhookEndpointServiceTest` 11, `WebhookDispatcherTest` 13, `WebhookEventSinkTest` 5,
   `WebhookUrlValidatorTest` 42, `WebhookSignerTest` 10, `WebhookEndpointPersistenceIT` 9,
-  `TenantIsolationIT` 9 and `OutboxRelayRlsIT` 4, the last three against a real
+  `TenantIsolationIT` 9 and `OutboxRelayRlsIT` 8, the last three against a real
   PostgreSQL 16 under Testcontainers. Those per-class numbers are
   published as a commit comment on every run, so the count is checkable rather than
-  asserted.
+  asserted. The figures are for `cd6872f`; the outbox relay rewrite that follows them
+  adds `V1_016`, `OutboxRelayTest` and three further `OutboxRelayRlsIT` cases, so the
+  count in this paragraph lags the tree until the next run publishes its own.
 - **Build and scan container image: success.** The image builds from
   `deploy/docker/Dockerfile.platform` and the Trivy scan over it exits clean at
   `severity: CRITICAL,HIGH` with `ignore-unfixed: true`.

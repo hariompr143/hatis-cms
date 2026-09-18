@@ -48,8 +48,9 @@ import java.util.UUID;
  * the delivery, so {@code int_webhook_deliveries} holds bookkeeping and not another copy
  * of every event the platform has ever emitted. The sweep is per organization for the
  * same reason the rest of this class is: a cross-tenant scan for due work is not
- * expressible under row level security, so the caller iterates organizations — which
- * {@code org_organizations} permits, it being the one table here with no RLS.
+ * expressible under row level security, so the caller iterates organizations. The list
+ * comes from {@code plat_tenant_directory}, not from {@code org_organizations} — that
+ * table is itself tenant scoped, and reading it unbound returns nothing.
  */
 @Service
 public class WebhookDispatcher {
