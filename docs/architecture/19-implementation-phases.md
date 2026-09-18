@@ -43,9 +43,10 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Audit: hash-chained, append-only | Done | `V1_012`, `TenantIsolationIT` |
 | Events: transactional outbox, signed webhooks | Done | `hatis-shared/event` |
 | Secrets: Env / Vault / AWS adapters, envelope encryption | Done | `hatis-infrastructure` |
-| Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/` |
+| Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/`; image builds and Trivy exits clean at CRITICAL,HIGH (§19.6) |
 | Architecture boundaries enforced at build time | Done | `HexagonalArchitectureTest` |
 | Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`; lint, typecheck, tests and `next build` green in CI (§19.6) |
+| CI green end to end | Done | Backend, image build and scan, IaC, frontend, SAST and secret scan in run `35318267100`. See §19.6. |
 
 **Not yet delivered in Phase 1**
 
@@ -56,7 +57,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Notification | Schema only. |
 | Integration / GitHub inbound | Schema and deployment tokens only; no webhook receiver. |
 | Backups | Documented (`17`); no restore drill has been executed, so the RPO/RTO figures are targets, not results. |
-| CI green | Backend, frontend, IaC, SAST and secret scan green in run `35313278777`. See §19.6. |
+| OWASP dependency-check | Configured in CI but not yet observed to a conclusion. See §19.6. |
 
 ## 19.3 Phase 2 — Enterprise
 
@@ -82,19 +83,53 @@ customer content into a third-party model without a per-tenant control.
 
 Stated plainly, because a claim of "done" without a named check is worth nothing.
 
-**Verified in GitHub Actions, run `35313278777` on commit `2c57cc0`:**
+**Verified in GitHub Actions, run `35318267100` on commit `795c4a5`:**
 
 - **Backend (Java 21 / Spring Boot): success.** All 17 modules compile and
   `mvn verify` completes, which is 67 unit tests and 9 tenant-isolation integration
   tests: `StorageKeysTest` 7, `AssetTest` 16, `ContentBodyValidatorTest` 12,
   `RichTextSanitizerTest` 16, `ReleaseTest` 9, `HexagonalArchitectureTest` 7, and
   `TenantIsolationIT` 9 against a real PostgreSQL 16 under Testcontainers.
+- **Build and scan container image: success.** The image builds from
+  `deploy/docker/Dockerfile.platform` and the Trivy scan over it exits clean at
+  `severity: CRITICAL,HIGH` with `ignore-unfixed: true`.
 - **IaC validation: success.** `helm lint --strict`, `helm template` with the
   production values, and `terraform validate` for both modules.
 - **Frontend (Next.js / TypeScript): success.** Lint, typecheck, tests, build.
 - **SAST (Semgrep) and secret scan: success.**
-- **Not confirmed:** the dependency scan and the container image build were still
-  running when this session's GitHub token expired. No claim is made about them.
+- **Not confirmed:** the OWASP dependency-check job was still running when this
+  section was written. It is independent of the image scan above and no claim is
+  made about it.
+
+**Closing the image scan took four attempts, and three of them were wrong.**
+The scan reported 61 fixable findings (9 critical, 52 high), every one of them inside
+`app.jar` rather than in the base image, so it was a dependency problem and not a
+Dockerfile problem. Spring Boot 3.3.5's managed transitives were all behind their
+fixes, and two of the criticals — `spring-security-web` CVE-2026-22732 and
+`spring-boot` CVE-2026-40973 — cannot be patched from underneath Boot at all. Moving
+to Boot 3.5.14 brought 61 down to 39; the rest needed the overrides below.
+
+**Version overrides must be declared above the Spring Boot BOM.** Boot is consumed in
+`backend/pom.xml` as an *imported* BOM, not as the POM's parent. An imported BOM
+resolves its own properties in its own context, so `<tomcat.version>` and
+`<netty.version>` in the importing POM are inert — the scan proved it by returning
+`tomcat-embed-core 10.1.54` and `netty 4.1.132.Final`, exactly what Boot 3.5.14
+manages, with the properties set to 10.1.58 and 4.1.137.Final. That override trick only
+works when a project inherits `spring-boot-starter-parent`. Maven resolves
+`dependencyManagement` first-declaration-wins, so `backend/pom.xml` imports
+`spring-framework-bom`, `spring-security-bom`, `netty-bom`, `jackson-bom` and
+`micrometer-bom`, and pins the artifacts that have no BOM, in thirteen entries placed
+*above* the `spring-boot-dependencies` import. Each entry carries the CVE it closes.
+
+**"The scanner names this version as the fix" is not "this version is obtainable."**
+The three remaining criticals all cited Tomcat 10.1.58. Tomcat never published it —
+`tomcat-embed-core`'s `maven-metadata.xml` on Maven Central, lastUpdated
+`20260915192844`, runs 10.1.57 straight to 10.1.59, and Tomcat's own 10.1 changelog
+carries 10.1.58 as "not released". 10.1.60 is used instead. Two further notes: Spring
+Data versions its BOM by release train (`2025.0.x`) while `spring-data-commons` is
+`3.5.x`, so `spring-data-bom:3.5.12` does not exist and the module must be pinned
+directly; and a blank severity cell in Trivy's table inherits the row above it, which
+is how CVE-2026-65182 was first misread as HIGH when it is CRITICAL.
 
 **Verified locally:**
 
@@ -123,10 +158,12 @@ of the build:
   every query saw zero rows. Three isolation tests were passing because nothing was
   visible to anyone, which is not the same as passing.
 
-**Environment limits, unchanged:** this sandbox has no `javac`, Maven, Docker or
-kubectl, and Maven Central is unreachable, so the backend is verified only in CI.
-`pgserver` provides a real PostgreSQL 16.2 locally, which is how the migrations and
-the row level security behaviour were checked directly.
+**Environment limits:** this sandbox has no `javac`, Maven, Docker or kubectl, and
+`curl` cannot reach Maven Central, so the backend is compiled and tested only in CI.
+Maven Central *is* readable through a document-fetch path, which is how the Tomcat
+metadata above was checked instead of guessed. `pgserver` provides a real PostgreSQL
+16.2 locally, which is how the migrations and the row level security behaviour were
+checked directly.
 
 ## 19.7 Definition of done for a phase
 
