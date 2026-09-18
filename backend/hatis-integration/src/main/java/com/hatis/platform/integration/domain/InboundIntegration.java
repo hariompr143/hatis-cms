@@ -93,8 +93,24 @@ public class InboundIntegration extends TenantScopedEntity {
         this.status = Status.CONNECTED;
     }
 
+    /**
+     * Points this integration at a signing secret in the secret store.
+     *
+     * <p>Takes a path and never the secret itself: the value lives in the secret
+     * manager, so rotating it does not touch this row and no credential reaches the
+     * database, a backup or a log line.
+     */
+    public void bindCredential(String credentialRef) {
+        if (credentialRef == null || credentialRef.isBlank()) {
+            throw new IllegalArgumentException("a credential reference is required to connect an integration");
+        }
+        this.credentialRef = credentialRef;
+    }
+
+    /** Clears the credential and stops deliveries. The stored secret is deleted separately. */
     public void disconnect() {
         this.status = Status.DISCONNECTED;
+        this.credentialRef = null;
     }
 
     /** Records that a verified delivery arrived, so operators can see a dead webhook. */

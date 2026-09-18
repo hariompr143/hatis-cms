@@ -22,6 +22,10 @@
       <groupId>com.hatis.platform</groupId>
       <artifactId>hatis-audit</artifactId>
     </dependency>
+    <dependency>
+      <groupId>com.hatis.platform</groupId>
+      <artifactId>hatis-authorization</artifactId>
+    </dependency>
     <!-- Provides io.swagger.v3.oas.annotations for the REST adapter. JPA, Spring MVC
          and Jackson arrive transitively through hatis-shared; webflux below is for
          outbound webhook dispatch, not for serving requests. -->
