@@ -307,6 +307,10 @@ jobs:
         with:
           input: /tmp/hatis-platform.tar
           format: table
+          # Captured so the report step can post the findings. Without this the only
+          # record is the runner log, and the report step ends up posting the Maven
+          # build output - which says nothing about why a scan failed.
+          output: /tmp/trivy-image.txt
           exit-code: "1"
           severity: CRITICAL,HIGH
           ignore-unfixed: true
@@ -340,8 +344,16 @@ jobs:
         run: |
           {
             echo "### Image pipeline failed for \`${GITHUB_SHA::7}\`"
+            if [ -s /tmp/trivy-image.txt ]; then
+              echo '```'
+              # The findings table first: that is what a scan failure is about.
+              grep -E "CRITICAL|HIGH|CVE-|Library|Vulnerability|===" /tmp/trivy-image.txt | head -n 80
+              echo '```'
+            else
+              echo "_No scan output captured, so the failure was before the scan._"
+            fi
             echo '```'
-            tail -n 120 /tmp/image-build.log 2>/dev/null || echo "no build log produced"
+            tail -n 60 /tmp/image-build.log 2>/dev/null || echo "no build log produced"
             echo '```'
           } > /tmp/body.md
           gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
