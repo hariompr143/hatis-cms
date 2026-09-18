@@ -142,6 +142,15 @@ whoever configures it remembering is not a fix. One of the nine tests asserts th
 insert is still *rejected* without the property, so the setting cannot be removed as
 apparently-redundant configuration.
 
+Fixing that surfaced a second fact, found because the test asserted the payload survived the
+round trip. It does, but not as text: PostgreSQL's `jsonb` normalises on the way in, sorting
+object keys by length and then bytewise and re-spacing the separators. Verified against this
+schema — a document written with `eventType` first comes back with `data` first. So the
+string stored in `plat_outbox.payload` is never the string the publisher serialised. That is
+what the webhook signer signs, and it is what any future payload hash or cache key would have
+to be computed over; comparing it against the publisher's output will never match.
+`theServerNormalisesTheDocumentBeforeStoringIt` pins it instead of leaving it as a surprise.
+
 Two generalisations worth keeping. First, a mapping annotation describes intent; whether the
 driver honours it is a fact that has to be observed against a running server. Second, this
 was invisible for as long as it was because the test suite covered the layers on either side

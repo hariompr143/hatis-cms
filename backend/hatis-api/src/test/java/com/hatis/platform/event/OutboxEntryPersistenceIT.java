@@ -1,5 +1,7 @@
 package com.hatis.platform.event;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hatis.platform.shared.event.OutboxEntry;
 import com.hatis.platform.shared.event.OutboxRepository;
 import com.hatis.platform.shared.event.PlatformEvent;
@@ -163,10 +165,16 @@ class OutboxEntryPersistenceIT {
         OutboxEntry reloaded = asTenant(org, em -> em.find(OutboxEntry.class, id));
 
         assertThat(reloaded).isNotNull();
-        assertThat(reloaded.getPayload())
-                .as("if the driver sends this String as character varying, PostgreSQL "
-                        + "rejects the insert and this line is never reached")
-                .isEqualTo(payload);
+        // Compared as documents, not as text. PostgreSQL's jsonb normalises on the way in -
+        // it reorders object keys and re-spaces the separators - so the String that comes
+        // back is not the String that went in even though it is the same JSON. Asserting
+        // text equality here failed for exactly that reason. See
+        // theServerNormalisesTheDocumentBeforeStoringIt.
+        assertThat(readTree(reloaded.getPayload()))
+                .as("if the driver sent this String as character varying, PostgreSQL "
+                        + "would have rejected the insert and this line would not be "
+                        + "reached at all")
+                .isEqualTo(readTree(payload));
         assertThat(reloaded.getEventType()).isEqualTo("cms.content.published");
         assertThat(reloaded.getOrganizationId()).isEqualTo(org);
         assertThat(reloaded.getEventVersion()).isEqualTo(1);
@@ -176,6 +184,35 @@ class OutboxEntryPersistenceIT {
         assertThat(reloaded.getCreatedAt()).isNotNull();
         assertThat(reloaded.getUpdatedAt()).isNotNull();
         assertThat(reloaded.getVersion()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("the server normalises the document, so the stored text is not the written text")
+    void theServerNormalisesTheDocumentBeforeStoringIt() {
+        UUID org = UUID.randomUUID();
+        String written = payloadFor("cms.content.published", org);
+        UUID id = asTenant(org, em -> {
+            OutboxEntry entry = new OutboxEntry(event("cms.content.published", org), written);
+            em.persist(entry);
+            return entry.getId();
+        });
+
+        String stored = asTenant(org, em -> em.find(OutboxEntry.class, id).getPayload());
+
+        // Pinned rather than left as a surprise, because it is load-bearing: jsonb sorts
+        // object keys by length and then bytewise and puts a space after each separator,
+        // so this text is what the webhook signer signs and what any future payload hash
+        // would have to be computed over. Comparing it against the publisher's output
+        // will never match. Verified against this schema: the same document written with
+        // eventType first comes back with data first.
+        assertThat(stored).isNotEqualTo(written);
+        assertThat(stored).startsWith("{\"data\": ");
+        assertThat(stored)
+                .as("sorted by key length, then bytewise: data, eventType, occurredAt, "
+                        + "eventVersion, organizationId")
+                .contains("}\"eventType\"")
+                .doesNotContain("{\"eventType\"");
+        assertThat(readTree(stored)).isEqualTo(readTree(written));
     }
 
     @Test
@@ -350,6 +387,16 @@ class OutboxEntryPersistenceIT {
             em.persist(entry);
             return entry.getId();
         });
+    }
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    private static JsonNode readTree(String json) {
+        try {
+            return JSON.readTree(json);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("not JSON: " + json, e);
+        }
     }
 
     private static OutboxRepository repository(EntityManager em) {
