@@ -106,7 +106,10 @@ public class OutboxRelay {
             entry.markPublished();
             outbox.save(entry);
         } catch (Exception e) {
-            failed.increment();
+            // No counter here: a failure attributable to a sink was already counted on the
+            // way out of the loop above. What reaches this catch is either a payload that
+            // would not deserialize or a failure to save the entry, neither of which
+            // belongs to any sink.
             entry.markFailedAttempt();
             outbox.save(entry);
             log.warn("Failed to publish event {} (attempt {}): {}",
