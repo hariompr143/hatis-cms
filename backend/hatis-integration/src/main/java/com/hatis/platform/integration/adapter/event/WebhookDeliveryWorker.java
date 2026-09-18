@@ -22,16 +22,18 @@ import java.util.UUID;
  * tenant set sees no rows at all. The work is therefore taken one tenant at a time, each
  * sweep running inside that tenant's context.
  *
- * <p>The list of tenants comes from {@code org_organizations}, which is the one table
- * involved with no row level security — deliberately, since every tenant has to be able to
- * look others up for billing and support. Reading it with plain SQL rather than through the
- * organization context follows the same choice {@code TenantKeyService} makes: it keeps
- * this module from taking a compile-time dependency on another context's entities.
+ * <p><strong>Known defect.</strong> The tenant list is read from {@code org_organizations},
+ * and this class's earlier javadoc claimed that table had no row level security. It does:
+ * {@code org_organizations} is in the strict tenant table list in
+ * {@code V1_013__row_level_security.sql} and carries {@code check (id = organization_id)},
+ * so with no tenant bound this query returns <em>zero rows</em> and the sweep delivers
+ * nothing. {@code OutboxRelayRlsIT#theOrganizationTableIsNotAReadableTenantDirectory}
+ * pins that behaviour. Fixing it needs a tenant source that is not itself row level scoped
+ * — a small unsecured directory or work-claim table — which is a schema decision rather
+ * than a change to this class.
  *
- * <p>That is a full scan of tenants every interval, which is the wrong shape at a few
- * thousand organizations. The honest fix is a small unsecured work-claim table rather than
- * iterating tenants; this is correct and observable first, and the cost is stated rather
- * than hidden.
+ * <p>Iterating tenants every interval would also be the wrong shape at a few thousand
+ * organizations even once the source is fixed, for the same reason.
  */
 @Component
 @ConditionalOnProperty(name = "hatis.role", havingValue = "worker", matchIfMissing = true)

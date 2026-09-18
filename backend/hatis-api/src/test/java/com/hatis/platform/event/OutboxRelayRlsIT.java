@@ -149,6 +149,35 @@ class OutboxRelayRlsIT {
     }
 
     @Test
+    @DisplayName("DEFECT: the organization table is tenant scoped too, so no tenant list is readable")
+    void theOrganizationTableIsNotAReadableTenantDirectory() throws Exception {
+        UUID organizationId = UUID.randomUUID();
+        try (Connection connection = migratorDataSource.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "insert into org_organizations (id, organization_id, name, slug)"
+                             + " values (?, ?, ?, ?)")) {
+            statement.setObject(1, organizationId);
+            statement.setObject(2, organizationId);
+            statement.setString(3, "Directory Tenant");
+            statement.setString(4, "directory-" + organizationId);
+            statement.execute();
+        }
+
+        try (Connection connection = appDataSource.getConnection();
+             Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery("select count(*) from org_organizations")) {
+            assertThat(rows.next()).isTrue();
+            assertThat(rows.getInt(1))
+                    .as("org_organizations is in the strict tenant list and carries "
+                            + "check (id = organization_id), so a background job with no "
+                            + "tenant bound cannot enumerate tenants at all. Any fix that "
+                            + "iterates organizations needs a source that is not itself "
+                            + "row level scoped.")
+                    .isZero();
+        }
+    }
+
+    @Test
     @DisplayName("the policy is the reason, not a missing grant")
     void theBlockComesFromThePolicyRatherThanPermissions() throws Exception {
         try (Connection connection = appDataSource.getConnection()) {
