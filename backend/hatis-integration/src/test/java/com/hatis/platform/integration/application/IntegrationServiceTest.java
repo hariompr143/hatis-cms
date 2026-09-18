@@ -164,9 +164,13 @@ class IntegrationServiceTest {
     @Test
     @DisplayName("rotating produces a different secret at the same path")
     void rotateReplacesTheSecret() {
-        String path = IntegrationService.secretPath(organizationId, UUID.randomUUID());
+        // The path has to be derived from the integration's own generated id. Building it
+        // from an unrelated UUID - as this test originally did - makes the service write
+        // somewhere else entirely and the verify below finds no matching call at all.
         InboundIntegration connected = new InboundIntegration(
-                organizationId, InboundIntegration.Type.GITHUB, "github-main", "{}", path);
+                organizationId, InboundIntegration.Type.GITHUB, "github-main", "{}", null);
+        String path = IntegrationService.secretPath(organizationId, connected.getId());
+        connected.bindCredential(path);
         connected.connect();
         when(repository.findByIdAndOrganizationId(connected.getId(), organizationId))
                 .thenReturn(Optional.of(connected));
@@ -179,12 +183,14 @@ class IntegrationServiceTest {
 
         // Both rotations must overwrite the same path: a rotation that wrote somewhere
         // else would leave the integration pointing at a stale secret. times(2) because
-        // rotate ran twice - a bare verify() means times(1) and would fail.
+        // rotate ran twice - a bare verify() means times(1).
         ArgumentCaptor<Secret> stored = ArgumentCaptor.forClass(Secret.class);
         verify(secrets, times(2)).put(eq(path), stored.capture());
         assertThat(stored.getAllValues()).hasSize(2);
         assertThat(stored.getAllValues().get(0).reveal()).isEqualTo(first.secret());
         assertThat(stored.getAllValues().get(1).reveal()).isEqualTo(second.secret());
+        // The integration must end up pointing at that path, not somewhere stale.
+        assertThat(connected.getCredentialRef()).isEqualTo(path);
     }
 
     @Test
