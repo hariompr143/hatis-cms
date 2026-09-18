@@ -46,10 +46,12 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/`; image builds and Trivy exits clean at CRITICAL,HIGH (§19.6) |
 | Architecture boundaries enforced at build time | Done | `HexagonalArchitectureTest` |
 | Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`; lint, typecheck, tests and `next build` green in CI (§19.6) |
-| CI green end to end | Done | All eight jobs green in run `35340608148`. See §19.6. |
+| CI green end to end | Done | All eight jobs green in run `35343518697`. See §19.6. |
 | GitHub integration: inbound webhooks and their management | Done | `hatis-integration`; HMAC-verified push receiver plus create/connect/rotate/disconnect, 48 tests |
 | Outbound webhook security core | Done | `hatis-integration`; `WebhookUrlValidator` (SSRF target checks) and `WebhookSigner` (delivery HMAC), 50 tests. Delivery itself is not delivered — see the outbound row below. |
 | Outbound webhook persistence | Done | `WebhookEndpoint` and `WebhookDelivery` map `int_webhook_endpoints` and `int_webhook_deliveries`, including the platform's first PostgreSQL `text[]` column; `V1_014` adds the bookkeeping columns deliveries need. `WebhookEndpointPersistenceIT` round-trips both against PostgreSQL 16 under forced RLS, 9 tests. |
+| Outbound endpoint management API | Done | `WebhookEndpointService` + `/v1/integrations/webhooks`: register, list, read, update, pause, resume, rotate, delete. The secret is envelope-encrypted under the tenant key and returned in plaintext exactly once. `WebhookEndpointServiceTest`, 11 tests. |
+| Outbound webhook transport | Done | `WebClientWebhookTransport` posts to the customer URL, connecting to the address `WebhookUrlValidator.resolveDeliverable` approved rather than resolving a second time, which closes the DNS rebinding gap. The pinning itself is not exercised by any test in this repository — see the outbound row below. |
 
 **Not yet delivered in Phase 1**
 
@@ -58,7 +60,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Workflow engine | Schema (`V1_008`) and the default template are seeded; there is no service or API. |
 | Analytics | Schema (`V1_011`) only. |
 | Notification | Schema only. |
-| Integration / outbound | The inbound receiver, its management API, the outbound security core and the outbound persistence are delivered. **Nothing moves bytes yet.** There is no dispatcher, no transport, no retry schedule and no API to register an endpoint, so a customer cannot subscribe to anything: an `int_webhook_endpoints` row can be persisted but nothing writes one outside a test, and nothing reads one to deliver. The outbox relay publishes to an `EventSink` — Kafka or in-process — not to those endpoints. The DNS-rebinding gap named in `WebhookUrlValidator` is also still open, and can only be closed by the transport pinning the address it resolved. |
+| Integration / outbound | A customer can register an endpoint, and the platform has a transport that can reach one. **There is still no dispatcher**, so a registered endpoint receives nothing: no fan-out over subscriptions, no delivery records written, no retry schedule, and nothing connects the outbox relay to `WebhookTransport`. The outbox relay still publishes to an `EventSink` — Kafka or in-process — and stops there. One further caveat: the address pinning that closes the DNS rebinding gap is a connection-level property, and no test in this repository opens a real socket, so it is argued from the code rather than demonstrated by a passing test. |
 | Backups | Documented (`17`); no restore drill has been executed, so the RPO/RTO figures are targets, not results. |
 | OWASP dependency-check | Runs only when an `NVD_API_KEY` secret exists; without one it skips with a notice, because dependency-check cannot fetch the NVD cache inside a job timeout unkeyed. Trivy is the gate that actually fails a build. See §19.6. |
 
@@ -86,18 +88,18 @@ customer content into a third-party model without a per-tenant control.
 
 Stated plainly, because a claim of "done" without a named check is worth nothing.
 
-**Verified in GitHub Actions, run `35340608148` on commit `69b63a8` — all eight jobs
+**Verified in GitHub Actions, run `35343518697` on commit `f7ac0ea` — all eight jobs
 green:**
 
 - **Backend (Java 21 / Spring Boot): success.** All 17 modules compile and
-  `mvn verify` completes. Run `35340608148` reports **183 tests, 0 failures, 0 errors,
-  0 skipped** across 14 classes: `StorageKeysTest` 7, `AssetTest` 16,
+  `mvn verify` completes. Run `35343518697` reports **196 tests, 0 failures, 0 errors,
+  0 skipped** across 15 classes: `StorageKeysTest` 7, `AssetTest` 16,
   `ContentBodyValidatorTest` 12, `RichTextSanitizerTest` 16, `ReleaseTest` 9,
   `HexagonalArchitectureTest` 7, `GitHubSignatureVerifierTest` 19,
   `GitHubPushEventTest` 9, `InboundWebhookServiceTest` 11, `IntegrationServiceTest` 9,
-  `WebhookUrlValidatorTest` 40, `WebhookSignerTest` 10, `WebhookEndpointPersistenceIT` 9
-  and `TenantIsolationIT` 9, the last two against a real PostgreSQL 16 under
-  Testcontainers. Those per-class numbers are
+  `WebhookEndpointServiceTest` 11, `WebhookUrlValidatorTest` 42, `WebhookSignerTest` 10,
+  `WebhookEndpointPersistenceIT` 9 and `TenantIsolationIT` 9, the last two against a real
+  PostgreSQL 16 under Testcontainers. Those per-class numbers are
   published as a commit comment on every run, so the count is checkable rather than
   asserted.
 - **Build and scan container image: success.** The image builds from
