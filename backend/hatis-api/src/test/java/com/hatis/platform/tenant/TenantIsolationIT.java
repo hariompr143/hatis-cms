@@ -266,7 +266,20 @@ class TenantIsolationIT {
 
     // ------------------------------------------------------------- helpers
 
+    /**
+     * Binds a tenant to a connection for the work that follows.
+     *
+     * <p>{@code set_config(..., true)} is transaction-local, and a JDBC connection
+     * defaults to autocommit - where every statement is its own transaction. Without
+     * turning autocommit off, the setting is discarded the moment this statement
+     * commits, the next statement runs unbound, and every query returns zero rows.
+     * That silently makes isolation tests pass for the wrong reason: nothing is
+     * visible, so nothing can leak. Verified against PostgreSQL 16 - the same policy
+     * returns 0 rows under autocommit and exactly the bound tenant's rows inside a
+     * transaction.
+     */
     private static void bindTenant(Connection connection, UUID organizationId) throws SQLException {
+        connection.setAutoCommit(false);
         try (PreparedStatement statement = connection.prepareStatement("select set_config(?, ?, true)")) {
             statement.setString(1, "hatis.organization_id");
             statement.setString(2, organizationId.toString());
