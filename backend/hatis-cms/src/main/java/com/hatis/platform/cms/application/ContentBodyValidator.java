@@ -6,6 +6,7 @@ import com.hatis.platform.shared.error.PlatformExceptions;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Validates a content body against a content type's schema.
@@ -81,10 +82,31 @@ public final class ContentBodyValidator {
         }
 
         if (!errors.isEmpty()) {
-            throw new PlatformExceptions.Validation("Content body validation failed",
+            // The field errors go in the message as well as the details map. A client
+            // that logs or displays only `message` still has to learn which field was
+            // wrong; "Content body validation failed" on its own is not actionable.
+            throw new PlatformExceptions.Validation(
+                    "Content body validation failed: " + describe(errors),
                     Map.of("fieldErrors", errors));
         }
         return normalised;
+    }
+
+    /** Renders field errors as one bounded sentence, naming each field exactly once. */
+    private static String describe(Map<String, String> errors) {
+        StringBuilder summary = new StringBuilder();
+        for (Map.Entry<String, String> error : errors.entrySet()) {
+            if (!summary.isEmpty()) {
+                summary.append("; ");
+            }
+            String field = error.getKey();
+            String reason = error.getValue();
+            summary.append(reason.startsWith(field + " ") ? reason : field + " " + reason);
+            if (summary.length() > 480) {
+                return summary.append("; ...").toString();
+            }
+        }
+        return summary.toString();
     }
 
     private static Object coerce(String name, JsonNode value, JsonNode definition) {
@@ -125,13 +147,21 @@ public final class ContentBodyValidator {
                 return value.asBoolean();
             }
             case "media" -> {
-                // A media reference is an asset id, never inline bytes. Storing
-                // bytes here would put customer content outside the DAM's
-                // scanning and lifecycle controls.
-                if (!value.isTextual() || value.asText().isBlank()) {
+                // A media reference is an asset id, never inline bytes or markup.
+                // Storing bytes here would put customer content outside the DAM's
+                // scanning and lifecycle controls, and accepting markup would give
+                // an author a place to hide HTML the rich text sanitiser never sees.
+                // Asset identifiers are UUIDs, so that is what is accepted.
+                if (!value.isTextual()) {
                     throw invalid(name, "must be an asset identifier");
                 }
-                return value.asText();
+                String reference = value.asText().trim();
+                try {
+                    UUID.fromString(reference);
+                } catch (IllegalArgumentException e) {
+                    throw invalid(name, "must be the UUID of an asset, not inline markup");
+                }
+                return reference;
             }
             case "array" -> {
                 if (!value.isArray()) {
