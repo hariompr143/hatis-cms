@@ -42,24 +42,30 @@
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
     <!--
-      Spring Boot 3.5.14, and the dependency versions pinned below, are the versions
-      the image scan names as fixes. Boot 3.3.5 shipped 61 fixable CRITICAL/HIGH
-      findings through its managed transitives; every version here is one Trivy cites
-      as a fix for a specific finding, so each is known to exist in Maven Central.
-      Jackson is deliberately left to Boot's own management: the advisory lists 2.18.8
-      as a fix on the 2.18 branch, and pinning it would be a downgrade from what 3.5
-      manages.
+      Spring Boot 3.5.14, plus the security overrides declared in dependencyManagement
+      below. Boot 3.3.5 shipped 61 fixable CRITICAL/HIGH findings through its managed
+      transitives; 3.5.14 alone brought that to 39, and the pinned overrides are what
+      close the rest. Every version used is one the image scan cites as the fix for a
+      named finding, so each is known to exist in Maven Central - this sandbox cannot
+      reach any Maven mirror, and guessing a coordinate that does not exist was the main
+      risk this avoids.
     -->
     <spring-boot.version>3.5.14</spring-boot.version>
     <!-- CVE-2025-41249, CVE-2026-41850, CVE-2026-41842, CVE-2026-41845 -->
     <spring-framework.version>6.2.19</spring-framework.version>
     <!-- CVE-2026-22732 (critical), CVE-2025-22228 -->
     <spring-security.version>6.5.9</spring-security.version>
-    <!-- CVE-2025-24813 (critical) and the tomcat-coyote/catalina findings -->
+    <!-- CVE-2026-41695 -->
+    <spring-data.version>3.5.12</spring-data.version>
+    <!-- CVE-2026-41731 -->
+    <spring-kafka.version>3.3.16</spring-kafka.version>
+    <!-- CVE-2025-24813 (critical), CVE-2026-41293 (critical), CVE-2026-65182 -->
     <tomcat.version>10.1.58</tomcat.version>
-    <!-- CVE-2026-75595 (critical) and the netty codec/handler findings -->
+    <!-- CVE-2026-75595 (critical), CVE-2026-42583, CVE-2026-42579, CVE-2026-42587 -->
     <netty.version>4.1.137.Final</netty.version>
-    <!-- CVE-2026-40984 -->
+    <!-- GHSA-r7wm-3cxj-wff9, CVE-2026-54512 -->
+    <jackson-bom.version>2.21.4</jackson-bom.version>
+    <!-- CVE-2026-40983, CVE-2026-40984 -->
     <micrometer.version>1.15.12</micrometer.version>
     <!-- CVE-2026-35554 -->
     <kafka.version>3.9.2</kafka.version>
@@ -83,6 +89,100 @@
 
   <dependencyManagement>
     <dependencies>
+      <!--
+        Security overrides, and they must stay ABOVE the Spring Boot BOM.
+
+        Spring Boot is consumed here as an imported BOM, not as this POM's parent. An
+        imported BOM resolves its own properties in its own context, so redefining
+        <tomcat.version> or <netty.version> in this file has no effect on it - that is
+        the difference from inheriting spring-boot-starter-parent, where those
+        properties do override. Maven resolves dependencyManagement first-declaration-wins,
+        so importing these BOMs and pinning these artifacts ahead of the Boot import is
+        what actually moves the versions.
+
+        The image scan proved the point: with the properties alone, tomcat-embed-core
+        stayed at 10.1.54 and netty at 4.1.132.Final - exactly what Boot 3.5.14 manages -
+        despite <tomcat.version>10.1.58</tomcat.version> being present.
+      -->
+      <dependency>
+        <groupId>org.springframework</groupId>
+        <artifactId>spring-framework-bom</artifactId>
+        <version>${spring-framework.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.springframework.security</groupId>
+        <artifactId>spring-security-bom</artifactId>
+        <version>${spring-security.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.springframework.data</groupId>
+        <artifactId>spring-data-bom</artifactId>
+        <version>${spring-data.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-bom</artifactId>
+        <version>${netty.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.jackson</groupId>
+        <artifactId>jackson-bom</artifactId>
+        <version>${jackson-bom.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>io.micrometer</groupId>
+        <artifactId>micrometer-bom</artifactId>
+        <version>${micrometer.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <!-- Tomcat, Kafka and the JDBC driver have no BOM, so they are pinned directly. -->
+      <dependency>
+        <groupId>org.apache.tomcat.embed</groupId>
+        <artifactId>tomcat-embed-core</artifactId>
+        <version>${tomcat.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.tomcat.embed</groupId>
+        <artifactId>tomcat-embed-el</artifactId>
+        <version>${tomcat.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.tomcat.embed</groupId>
+        <artifactId>tomcat-embed-websocket</artifactId>
+        <version>${tomcat.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.springframework.kafka</groupId>
+        <artifactId>spring-kafka</artifactId>
+        <version>${spring-kafka.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.kafka</groupId>
+        <artifactId>kafka-clients</artifactId>
+        <version>${kafka.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.lz4</groupId>
+        <artifactId>lz4-java</artifactId>
+        <version>${lz4-java.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.postgresql</groupId>
+        <artifactId>postgresql</artifactId>
+        <version>${postgresql.version}</version>
+      </dependency>
+
       <dependency>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-dependencies</artifactId>
