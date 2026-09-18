@@ -43,4 +43,36 @@ public interface IntegrationRepositories {
         @Override
         Optional<InboundIntegration> findById(UUID id);
     }
+
+    /**
+     * Outbound endpoints. Every finder takes {@code organizationId} explicitly; row
+     * level security is the backstop, not the control.
+     */
+    interface WebhookEndpointRepository extends JpaRepository<WebhookEndpoint, UUID> {
+
+        Optional<WebhookEndpoint> findByIdAndOrganizationId(UUID id, UUID organizationId);
+
+        List<WebhookEndpoint> findByOrganizationId(UUID organizationId);
+
+        /** The endpoints an event has to be fanned out to, in registration order. */
+        List<WebhookEndpoint> findByOrganizationIdAndActiveTrue(UUID organizationId);
+    }
+
+    /**
+     * Delivery bookkeeping.
+     *
+     * <p>{@code findByStatusAndNextAttemptAtBefore} is the dispatcher's work queue. It is
+     * deliberately not a locking query: claiming rows atomically across workers is the
+     * dispatcher's job and it does it with {@code for update skip locked}, which no
+     * derived finder can express.
+     */
+    interface WebhookDeliveryRepository extends JpaRepository<WebhookDelivery, UUID> {
+
+        Optional<WebhookDelivery> findByIdAndOrganizationId(UUID id, UUID organizationId);
+
+        List<WebhookDelivery> findByEndpointIdAndOrganizationId(UUID endpointId, UUID organizationId);
+
+        long countByEndpointIdAndOrganizationIdAndStatus(UUID endpointId, UUID organizationId,
+                                                         WebhookDelivery.Status status);
+    }
 }
