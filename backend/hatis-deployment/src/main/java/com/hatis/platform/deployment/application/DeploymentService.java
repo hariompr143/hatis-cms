@@ -113,7 +113,7 @@ public class DeploymentService {
         Application application = requireApplication(applicationId, organizationId);
         authorization.require("release:write", ScopeType.PROJECT,
                 application.getProjectId());
-        if (releases.existsByOrganizationIdAndApplicationIdAndVersion(organizationId, applicationId,
+        if (releases.existsByOrganizationIdAndApplicationIdAndReleaseVersion(organizationId, applicationId,
                 version.toLowerCase(java.util.Locale.ROOT))) {
             throw new PlatformExceptions.AlreadyExists("Release " + version + " already exists");
         }
@@ -190,11 +190,11 @@ public class DeploymentService {
                 .resource("deployment", deployment.getId())
                 .data(Map.of("applicationId", applicationId.toString(),
                         "environmentId", environmentId.toString(),
-                        "releaseVersion", release.getVersion()))
+                        "releaseVersion", release.getReleaseVersion()))
                 .build());
 
         return new DeploymentAccepted(deployment.getId(), operation.getId(), application.getSlug(),
-                release.getVersion());
+                release.getReleaseVersion());
     }
 
     /**
@@ -326,10 +326,10 @@ public class DeploymentService {
 
         events.publish(PlatformEvent.of("deployment.rollback_started", organizationId)
                 .resource("deployment", rollback.getId())
-                .data(Map.of("releaseVersion", previous.getVersion()))
+                .data(Map.of("releaseVersion", previous.getReleaseVersion()))
                 .build());
         return new DeploymentAccepted(rollback.getId(), operation.getId(), application.getSlug(),
-                previous.getVersion());
+                previous.getReleaseVersion());
     }
 
     @TenantTransactional(readOnly = true)
@@ -382,7 +382,7 @@ public class DeploymentService {
                               java.time.Instant createdAt) {
 
         public static ReleaseView from(Release release) {
-            return new ReleaseView(release.getId(), release.getApplicationId(), release.getVersion(),
+            return new ReleaseView(release.getId(), release.getApplicationId(), release.getReleaseVersion(),
                     release.getImage(), release.getDigest(), release.getSourceType().name(),
                     release.getScanStatus().name(), release.getStatus().name(), release.getCreatedAt());
         }

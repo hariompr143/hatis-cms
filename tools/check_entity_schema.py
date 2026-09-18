@@ -48,6 +48,38 @@ def parse_migrations():
     return tables
 
 
+def find_duplicate_columns():
+    """(file, table, [columns]) for every table that declares a column name twice.
+
+    parse_migrations collects columns into a set, so a duplicated column disappears
+    from its output and the mapping check sees nothing wrong. PostgreSQL, however,
+    refuses to create the table at all, which fails every Flyway run - dep_releases
+    once declared both the release's semantic version and BaseEntity's optimistic
+    lock as `version`. Worth checking on its own terms.
+    """
+    duplicates = []
+    for path in sorted(MIGRATIONS.glob('*.sql')):
+        sql = path.read_text()
+        for match in re.finditer(r'create table (?:if not exists )?([a-z_]+)\s*\((.*?)\n\);',
+                                 sql, re.DOTALL):
+            name, body = match.group(1), match.group(2)
+            seen = defaultdict(int)
+            for line in body.split('\n'):
+                stripped = line.strip()
+                if not stripped or stripped.startswith('--'):
+                    continue
+                if stripped.split()[0].lower() in (
+                        'constraint', 'primary', 'unique', 'foreign', 'check', 'exclude'):
+                    continue
+                column = re.match(r'([a-z_][a-z0-9_]*)\s', stripped)
+                if column:
+                    seen[column.group(1)] += 1
+            repeated = sorted(c for c, count in seen.items() if count > 1)
+            if repeated:
+                duplicates.append((path.name, name, repeated))
+    return duplicates
+
+
 def parse_entities():
     """(file, table, superclass, [(field, column, line)]) for every @Entity."""
     entities = []
@@ -110,6 +142,10 @@ def main():
     print(f'sources define {len(entities)} @Entity classes\n')
 
     problems = 0
+    for source, table, repeated in find_duplicate_columns():
+        print(f'DUPLICATE COLUMN {source}: table {table} declares {repeated} more than once')
+        problems += 1
+
     for path, table, superclass, fields in entities:
         if table not in tables:
             print(f'MISSING TABLE  {path.relative_to(BACKEND)}: @Table("{table}") is not created by any migration')

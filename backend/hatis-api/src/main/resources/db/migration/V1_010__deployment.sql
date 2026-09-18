@@ -35,7 +35,9 @@ create table dep_releases (
     id               uuid primary key,
     organization_id  uuid          not null,
     application_id   uuid          not null,
-    version          varchar(120)  not null,
+    -- Named release_version, not version: BaseEntity already maps the JPA
+    -- optimistic-lock column to "version", and a table cannot declare it twice.
+    release_version  varchar(120)  not null,
     image            varchar(512)  not null,
     -- Pinning by digest means "deploy the same thing again" is actually possible.
     digest           varchar(128),
@@ -53,7 +55,7 @@ create table dep_releases (
     created_at       timestamptz   not null default now(),
     updated_at       timestamptz   not null default now(),
     version          bigint        not null default 0,
-    constraint uq_dep_releases_version unique (application_id, version)
+    constraint uq_dep_releases_release unique (application_id, release_version)
 );
 
 create table dep_deployments (

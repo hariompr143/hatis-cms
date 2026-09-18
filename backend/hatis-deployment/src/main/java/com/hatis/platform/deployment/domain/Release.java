@@ -45,8 +45,8 @@ public class Release extends TenantScopedEntity {
     @Column(name = "application_id", nullable = false, updatable = false)
     private UUID applicationId;
 
-    @Column(name = "version", nullable = false, length = 120, updatable = false)
-    private String version;
+    @Column(name = "release_version", nullable = false, length = 120, updatable = false)
+    private String releaseVersion;
 
     @Column(name = "image", nullable = false, length = 512)
     private String image;
@@ -104,7 +104,7 @@ public class Release extends TenantScopedEntity {
                     Map.of("field", "image"));
         }
         this.applicationId = applicationId;
-        this.version = version.trim().toLowerCase(Locale.ROOT);
+        this.releaseVersion = version.trim().toLowerCase(Locale.ROOT);
         this.image = normalizedImage;
         this.digest = digest;
         this.sourceType = sourceType == null ? SourceType.REGISTRY : sourceType;
@@ -135,7 +135,7 @@ public class Release extends TenantScopedEntity {
     public void requireDeployable() {
         if (status != Status.READY) {
             throw new PlatformExceptions.StateConflict(
-                    "Release " + version + " is " + status + " and cannot be deployed");
+                    "Release " + releaseVersion + " is " + status + " and cannot be deployed");
         }
     }
 
@@ -151,8 +151,9 @@ public class Release extends TenantScopedEntity {
         return applicationId;
     }
 
-    public String getVersion() {
-        return version;
+    /** The release's own version, distinct from the entity's optimistic-lock version. */
+    public String getReleaseVersion() {
+        return releaseVersion;
     }
 
     public String getImage() {

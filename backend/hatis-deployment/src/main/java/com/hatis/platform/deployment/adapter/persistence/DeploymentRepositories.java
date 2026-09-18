@@ -31,7 +31,7 @@ public interface DeploymentRepositories {
                                                            UUID applicationId,
                                                            Pageable pageable);
 
-        boolean existsByOrganizationIdAndApplicationIdAndVersion(UUID organizationId,
+        boolean existsByOrganizationIdAndApplicationIdAndReleaseVersion(UUID organizationId,
                                                                  UUID applicationId,
                                                                  String version);
 

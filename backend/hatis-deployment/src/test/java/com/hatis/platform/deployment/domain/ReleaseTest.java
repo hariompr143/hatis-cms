@@ -98,6 +98,6 @@ class ReleaseTest {
     @Test
     @DisplayName("the version is normalised so lookups are stable")
     void normalizesVersion() {
-        assertThat(newRelease("registry.example.com/app:1.4.2", null).getVersion()).isEqualTo("1.4.2");
+        assertThat(newRelease("registry.example.com/app:1.4.2", null).getReleaseVersion()).isEqualTo("1.4.2");
     }
 }
