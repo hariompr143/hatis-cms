@@ -163,7 +163,12 @@ class EntitySchemaValidationIT {
                                 + "about it", entity.getSimpleName())
                         .hasSize(1);
             } catch (RuntimeException e) {
-                disagreements.add(entity.getSimpleName() + " -> " + firstLineOf(e));
+                String disagreement = entity.getSimpleName() + " -> " + firstLineOf(e);
+                // Maven's summary truncates an assertion message, and the failsafe XML
+                // that holds the whole of it is not readable from here, so the list is
+                // also printed under a marker the build report collects.
+                System.out.println("SCHEMA-DISAGREEMENT " + disagreement);
+                disagreements.add(disagreement);
             }
         }
 

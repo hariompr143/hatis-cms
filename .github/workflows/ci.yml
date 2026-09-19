@@ -126,15 +126,14 @@ jobs:
             else
               echo "**Total: $total tests, $fails failures, $errs errors, $skips skipped** across $classes test classes."
             fi
-            if grep -q 'CLASSPATH-PROBE' /tmp/mvn.log 2>/dev/null; then
-              echo
-              echo "What the failsafe classloader resolves, printed by"
-              echo "\`JsonbDataSourceConfigurationIT\`:"
-              echo
-              echo '```'
-              grep 'CLASSPATH-PROBE' /tmp/mvn.log | sed 's/^.*CLASSPATH-PROBE //' | sort -u
-              echo '```'
-            fi
+            for marker in CLASSPATH-PROBE SCHEMA-DISAGREEMENT; do
+              if grep -q "$marker" /tmp/mvn.log 2>/dev/null; then
+                echo
+                echo '```'
+                grep "$marker" /tmp/mvn.log | sed "s/^.*$marker //" | sort -u
+                echo '```'
+              fi
+            done
           } > /tmp/summary.md
           gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
             -f body="$(cat /tmp/summary.md)" >/dev/null
