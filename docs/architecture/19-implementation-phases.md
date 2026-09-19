@@ -46,7 +46,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/`; image builds and Trivy exits clean at CRITICAL,HIGH (§19.6) |
 | Architecture boundaries enforced at build time | Done | `HexagonalArchitectureTest` |
 | Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`; lint, typecheck, tests and `next build` green in CI (§19.6) |
-| CI green end to end | Done | All eight jobs green in run `35436293266`. See §19.6. |
+| CI green end to end | Done | All eight jobs green in run `35438496624`. See §19.6. |
 | GitHub integration: inbound webhooks and their management | Done | `hatis-integration`; HMAC-verified push receiver plus create/connect/rotate/disconnect, 48 tests |
 | Outbound webhook security core | Done | `hatis-integration`; `WebhookUrlValidator` (SSRF target checks) and `WebhookSigner` (delivery HMAC), 50 tests. Delivery itself is not delivered — see the outbound row below. |
 | Outbound webhook persistence | Done | `WebhookEndpoint` and `WebhookDelivery` map `int_webhook_endpoints` and `int_webhook_deliveries`, including the platform's first PostgreSQL `text[]` column; `V1_014` adds the bookkeeping columns deliveries need. `WebhookEndpointPersistenceIT` round-trips both against PostgreSQL 16 under forced RLS, 9 tests. |
@@ -90,11 +90,11 @@ customer content into a third-party model without a per-tenant control.
 
 Stated plainly, because a claim of "done" without a named check is worth nothing.
 
-**Verified in GitHub Actions, run `35436293266` on commit `77c3c45` — all eight jobs
+**Verified in GitHub Actions, run `35438496624` on commit `0af2f34` — all eight jobs
 green:**
 
 - **Backend (Java 21 / Spring Boot): success.** All 17 modules compile and
-  `mvn verify` completes. The run reports **255 tests, 0 failures, 0 errors,
+  `mvn verify` completes. The run reports **256 tests, 0 failures, 0 errors,
   0 skipped** across 22 classes: `StorageKeysTest` 7, `AssetTest` 16,
   `ContentBodyValidatorTest` 12, `RichTextSanitizerTest` 16, `ReleaseTest` 9,
   `HexagonalArchitectureTest` 7, `GitHubSignatureVerifierTest` 19,
@@ -103,7 +103,7 @@ green:**
   `WebhookUrlValidatorTest` 42, `WebhookSignerTest` 10, `OutboxRelayTest` 8,
   `OutboxWorkTest` 8, `OutboxEntryPersistenceIT` 10, `WebhookEndpointPersistenceIT` 9,
   `TenantIsolationIT` 9, `OutboxRelayRlsIT` 11 and
-  `JsonbDataSourceConfigurationIT` 4, the last five against a real
+  `JsonbDataSourceConfigurationIT` 5, the last five against a real
   PostgreSQL 16 under Testcontainers. Those per-class numbers are published as a
   commit comment on every run, so the count is checkable rather than asserted.
 - **Build and scan container image: success.** The image builds from
@@ -158,6 +158,20 @@ deleting the line fails that test instead of quietly going untested. The chain i
 `new DriverDataSource(jdbcUrl, driverClassName, dataSourceProperties, …)` →
 `driver.connect(jdbcUrl, driverProperties)`, which is where the property finally reaches
 pgjdbc.
+
+That account was still incomplete in one respect, and it is the kind of incompleteness that
+is easy to mistake for a finished job. The properties reach `HikariConfig` in the running
+application through `@ConfigurationProperties("spring.datasource.hikari")`, and a test that
+calls `addDataSourceProperty` by hand exercises the same method the binder calls without
+exercising the binder — so a change in how that prefix binds would not have been caught.
+`springBindsTheShippedYamlOntoThePool` runs Boot's own `Binder` over the file through
+`YamlPropertySourceLoader`, and both write tests now build their pool from the resulting
+`HikariConfig`. It also asserts `pool-name` and `maximum-pool-size`, which only arrive if the
+whole prefix bound and the `${HATIS_DB_POOL_MAX:20}` placeholder resolved; a map holding one
+expected key would satisfy the first assertion on its own. The `PropertySourcesPlaceholdersResolver`
+is load-bearing rather than decoration — without it the binder tries to convert the literal
+placeholder text into an `int` and fails, which reads as a broken configuration rather than
+as a missing step in the test.
 
 Writing that test produced two findings that have nothing to do with `jsonb` and are worth
 carrying forward.
