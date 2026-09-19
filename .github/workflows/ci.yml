@@ -184,6 +184,13 @@ jobs:
   secrets:
     name: Secret scan
     runs-on: ubuntu-24.04
+    permissions:
+      # gitleaks-action comments its findings on the pull request, which the
+      # workflow-wide "contents: read" does not permit; without this it fails with
+      # "Resource not accessible by integration" and the findings go nowhere.
+      # contents: write is for the commit comment below.
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -192,6 +199,56 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # "Leaks detected, see job summary" is not actionable when the summary is empty
+      # and the SARIF artifact sits on a blob host that is not reachable from every
+      # environment - which is how a real finding stayed undiagnosable. This posts
+      # where the findings are, through the same commit-comment channel the backend
+      # test totals use.
+      #
+      # It posts rule, file and line only. The report also carries the matched text,
+      # and copying that into a comment on a public repository would publish the very
+      # value the scan exists to keep out of it.
+      - name: Report findings
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          report=$(find . -maxdepth 3 -name 'gitleaks*' \
+                     \( -name '*.sarif' -o -name '*.json' \) 2>/dev/null | head -1)
+          {
+            echo "### Secret scan (\`${GITHUB_SHA::7}\`)"
+            echo
+            if [ -z "$report" ]; then
+              echo "gitleaks failed but wrote no report file, so there is nothing to"
+              echo "summarise here. The job log is the only remaining source."
+            else
+              echo "From \`$(basename "$report")\`. Rule, file and line only - the report"
+              echo "also contains the matched text, which is deliberately not reproduced."
+              echo
+              echo "| Rule | File | Line |"
+              echo "| --- | --- | --- |"
+              python3 - "$report" <<'PY'
+          import json, sys
+          with open(sys.argv[1]) as handle:
+              report = json.load(handle)
+          rows = 0
+          for run in report.get("runs", []):
+              for result in run.get("results", []):
+                  rule = result.get("ruleId", "?")
+                  for location in result.get("locations", []):
+                      physical = location.get("physicalLocation", {})
+                      uri = physical.get("artifactLocation", {}).get("uri", "?")
+                      line = physical.get("region", {}).get("startLine", "?")
+                      print("| %s | %s | %s |" % (rule, uri, line))
+                      rows += 1
+          if rows == 0:
+              print("| _(none listed)_ | | |")
+          PY
+            fi
+          } > /tmp/secrets.md
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
+            -f body="$(cat /tmp/secrets.md)" >/dev/null
 
   sast:
     name: SAST (Semgrep)
