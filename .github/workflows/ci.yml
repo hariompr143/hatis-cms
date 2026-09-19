@@ -197,6 +197,12 @@ jobs:
           fetch-depth: 0
       - name: gitleaks
         uses: gitleaks/gitleaks-action@v2
+        with:
+          # Pinned to a known path in the workspace. Left to its default the report
+          # is uploaded as an artifact and removed, which is unreachable from
+          # anywhere the blob host is not.
+          report-format: sarif
+          report-path: gitleaks-report.sarif
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -216,6 +222,12 @@ jobs:
         run: |
           report=$(find . -maxdepth 3 -name 'gitleaks*' \
                      \( -name '*.sarif' -o -name '*.json' \) 2>/dev/null | head -1)
+          if [ -z "$report" ]; then
+            # Fall back to anywhere under the runner home or /tmp, so a change in
+            # where the action writes is a solvable surprise rather than a dead end.
+            report=$(find /home/runner /tmp -maxdepth 4 -name '*.sarif' \
+                       -newermt '-2 hours' 2>/dev/null | head -1)
+          fi
           # On a pull_request event GITHUB_SHA is the synthesized merge commit, which
           # is not a commit anyone can browse and whose comments the REST API does
           # not list. The head SHA is a real commit, so the report stays findable.
@@ -227,8 +239,14 @@ jobs:
             echo "### Secret scan (\`${target::7}\`)"
             echo
             if [ -z "$report" ]; then
-              echo "gitleaks failed but wrote no report file, so there is nothing to"
-              echo "summarise here. The job log is the only remaining source."
+              echo "gitleaks failed but no report file was found, so there is nothing"
+              echo "to summarise. Searched the workspace, the runner home and /tmp;"
+              echo "here is what the workspace root holds, so the next attempt does not"
+              echo "have to guess where it went:"
+              echo
+              echo '```'
+              ls -la
+              echo '```'
             else
               echo "From \`$(basename "$report")\`. Rule, file and line only - the report"
               echo "also contains the matched text, which is deliberately not reproduced."
