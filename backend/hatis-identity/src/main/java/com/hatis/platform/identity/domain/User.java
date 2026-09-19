@@ -42,7 +42,10 @@ public class User extends BaseEntity {
         REQUIRED
     }
 
-    @Column(name = "email", nullable = false, length = 320, updatable = false)
+    // citext, not varchar: the unique index on email is case-insensitive. Without
+    // columnDefinition Hibernate infers varchar and ddl-auto: validate refuses to start.
+    @Column(name = "email", nullable = false, length = 320, updatable = false,
+            columnDefinition = "citext")
     private String email;
 
     @Column(name = "email_verified", nullable = false)

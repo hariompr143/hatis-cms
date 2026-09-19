@@ -42,7 +42,10 @@ public class Organization extends TenantScopedEntity {
     @Column(name = "name", nullable = false, length = 200)
     private String name;
 
-    @Column(name = "slug", nullable = false, length = 63, unique = true, updatable = false)
+    // citext, not varchar: slug uniqueness is case-insensitive. Without
+    // columnDefinition Hibernate infers varchar and ddl-auto: validate refuses to start.
+    @Column(name = "slug", nullable = false, length = 63, unique = true, updatable = false,
+            columnDefinition = "citext")
     private String slug;
 
     @Enumerated(EnumType.STRING)

@@ -73,10 +73,12 @@ public class AuditLog {
     @Column(name = "metadata", columnDefinition = "jsonb")
     private String metadata;
 
-    @Column(name = "previous_hash", length = 64)
+    // The migration declares these char(64), not varchar. Without columnDefinition
+    // Hibernate infers varchar and, with ddl-auto: validate, refuses to start.
+    @Column(name = "previous_hash", length = 64, columnDefinition = "char(64)")
     private String previousHash;
 
-    @Column(name = "record_hash", nullable = false, length = 64)
+    @Column(name = "record_hash", nullable = false, length = 64, columnDefinition = "char(64)")
     private String recordHash;
 
     @Column(name = "sequence", nullable = false)
