@@ -1,0 +1,25 @@
+{{/*
+Guards against shipping a development-only configuration to a real cluster.
+
+DevelopmentMalwareScanner accepts every upload unscanned and exists only so a local
+checkout can exercise the DAM without a ClamAV container. It is selected by
+`assets.scanner.mode=none`. This template makes that choice impossible to carry into
+a production or staging install silently: the chart refuses to render.
+
+A warning in a log is not a control. A chart that will not install is.
+*/}}
+{{- if and (eq (toString .Values.assets.scanner.mode) "none") (ne (toString .Values.profile) "development") }}
+{{- fail (printf "assets.scanner.mode=none disables malware scanning and is only permitted with profile=development (current profile: %s). Set assets.scanner.mode=clamav and deploy the clamav sidecar." (toString .Values.profile)) }}
+{{- end }}
+{{- if eq (toString .Values.assets.scanner.mode) "none" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hatis.fullname" . }}-scanner-warning
+  labels:
+    {{- include "hatis.labels" . | nindent 4 }}
+data:
+  warning: >-
+    Malware scanning is DISABLED. Uploaded assets are accepted without being
+    scanned. This configuration is for local development only.
+{{- end }}

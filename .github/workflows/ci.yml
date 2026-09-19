@@ -1,0 +1,522 @@
+name: CI
+
+# Pull-request and branch pipeline.
+#
+#   source -> format/lint -> unit test -> integration test -> SAST
+#          -> dependency scan -> secret scan -> build -> container scan
+#          -> SBOM -> artifact
+#
+# Production deployment is a separate, manually approved workflow (release.yml).
+
+on:
+  push:
+    branches: ["main", "arena/**"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JAVA_VERSION: "21"
+  NODE_VERSION: "22"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/hatis-platform
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-24.04
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      infra: ${{ steps.filter.outputs.infra }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '.github/workflows/ci.yml'
+            frontend:
+              - 'frontend/**'
+            infra:
+              - 'deploy/**'
+              - 'terraform/**'
+
+  backend:
+    name: Backend (Java 21 / Spring Boot)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Verify (enforce, compile, unit tests, integration tests)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mvn -B -ntp -e verify 2>&1 | tee /tmp/mvn.log
+
+      # Raw job logs are not always reachable from every environment, so publish
+      # the tail of a failed build as a commit comment.
+      - name: Report build failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "### Backend build failed (\`${GITHUB_SHA::7}\`)"
+            echo '```'
+            grep -E "ERROR|BUILD FAILURE|Tests run:|\[INFO\] Building |Caused by|was violated|Class <|Architecture Violation" /tmp/mvn.log | tail -n 220
+            echo '```'
+          } > /tmp/body.md
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
+            -f body="$(cat /tmp/body.md)" >/dev/null
+
+      # A green run otherwise leaves no evidence of what executed: the raw job logs are
+      # not reachable from every environment and the artifacts cannot be downloaded, so
+      # "the tests passed" would rest on an exit code alone. These numbers come from the
+      # JUnit XML JUnit itself wrote, per class, which is what makes a claim like "67
+      # unit tests and 9 integration tests" checkable after the fact.
+      - name: Report test totals
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "### Backend test results (\`${GITHUB_SHA::7}\`)"
+            echo
+            echo "| Test class | Tests | Failures | Errors | Skipped |"
+            echo "| --- | --- | --- | --- | --- |"
+            total=0; fails=0; errs=0; skips=0; classes=0
+            for f in $(find . -path '*/target/*-reports/TEST-*.xml' | sort); do
+              n=$(basename "$f" .xml); n=${n#TEST-}
+              t=$(grep -o '<testcase ' "$f" | wc -l)
+              fl=$(grep -o '<failure' "$f" | wc -l)
+              er=$(grep -o '<error' "$f" | wc -l)
+              sk=$(grep -o '<skipped' "$f" | wc -l)
+              echo "| ${n##*.} | $t | $fl | $er | $sk |"
+              total=$((total+t)); fails=$((fails+fl)); errs=$((errs+er)); skips=$((skips+sk))
+              classes=$((classes+1))
+            done
+            echo
+            if [ "$classes" -eq 0 ]; then
+              echo "**No JUnit XML was found.** A green build with zero test classes is not"
+              echo "a passing suite, so this is reported loudly rather than left blank."
+            else
+              echo "**Total: $total tests, $fails failures, $errs errors, $skips skipped** across $classes test classes."
+            fi
+            for marker in CLASSPATH-PROBE SCHEMA-DISAGREEMENT; do
+              if grep -q "$marker" /tmp/mvn.log 2>/dev/null; then
+                echo
+                echo '```'
+                grep "$marker" /tmp/mvn.log | sed "s/^.*$marker //" | sort -u
+                echo '```'
+              fi
+            done
+          } > /tmp/summary.md
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
+            -f body="$(cat /tmp/summary.md)" >/dev/null
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-reports
+          path: backend/**/target/*-reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/**/target/site/jacoco/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  frontend:
+    name: Frontend (Next.js / TypeScript)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test -- --run
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: /api
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-24.04
+    permissions:
+      # gitleaks-action comments its findings on the pull request, which the
+      # workflow-wide "contents: read" does not permit; without this it fails with
+      # "Resource not accessible by integration" and the findings go nowhere.
+      # contents: write is for the commit comment below.
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          # Pinned to a known path in the workspace. Left to its default the report
+          # is uploaded as an artifact and removed, which is unreachable from
+          # anywhere the blob host is not.
+          report-format: sarif
+          report-path: gitleaks-report.sarif
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # "Leaks detected, see job summary" is not actionable when the summary is empty
+      # and the SARIF artifact sits on a blob host that is not reachable from every
+      # environment - which is how a real finding stayed undiagnosable. This posts
+      # where the findings are, through the same commit-comment channel the backend
+      # test totals use.
+      #
+      # It posts rule, file and line only. The report also carries the matched text,
+      # and copying that into a comment on a public repository would publish the very
+      # value the scan exists to keep out of it.
+      - name: Report findings
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          report=$(find . -maxdepth 3 -name 'gitleaks*' \
+                     \( -name '*.sarif' -o -name '*.json' \) 2>/dev/null | head -1)
+          if [ -z "$report" ]; then
+            # Fall back to anywhere under the runner home or /tmp, so a change in
+            # where the action writes is a solvable surprise rather than a dead end.
+            report=$(find /home/runner /tmp -maxdepth 4 -name '*.sarif' \
+                       -newermt '-2 hours' 2>/dev/null | head -1)
+          fi
+          # On a pull_request event GITHUB_SHA is the synthesized merge commit, which
+          # is not a commit anyone can browse and whose comments the REST API does
+          # not list. The head SHA is a real commit, so the report stays findable.
+          target="${GITHUB_SHA}"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            target=$(python3 -c 'import json, os; print(json.load(open(os.environ["GITHUB_EVENT_PATH"]))["pull_request"]["head"]["sha"])')
+          fi
+          {
+            echo "### Secret scan (\`${target::7}\`)"
+            echo
+            if [ -z "$report" ]; then
+              echo "gitleaks failed but no report file was found, so there is nothing"
+              echo "to summarise. Searched the workspace, the runner home and /tmp;"
+              echo "here is what the workspace root holds, so the next attempt does not"
+              echo "have to guess where it went:"
+              echo
+              echo '```'
+              ls -la
+              echo '```'
+            else
+              echo "From \`$(basename "$report")\`. Rule, file and line only - the report"
+              echo "also contains the matched text, which is deliberately not reproduced."
+              echo
+              echo "| Rule | File | Line |"
+              echo "| --- | --- | --- |"
+              python3 - "$report" <<'PY'
+          import json, sys
+          with open(sys.argv[1]) as handle:
+              report = json.load(handle)
+          rows = 0
+          for run in report.get("runs", []):
+              for result in run.get("results", []):
+                  rule = result.get("ruleId", "?")
+                  for location in result.get("locations", []):
+                      physical = location.get("physicalLocation", {})
+                      uri = physical.get("artifactLocation", {}).get("uri", "?")
+                      line = physical.get("region", {}).get("startLine", "?")
+                      print("| %s | %s | %s |" % (rule, uri, line))
+                      rows += 1
+          if rows == 0:
+              print("| _(none listed)_ | | |")
+          PY
+            fi
+          } > /tmp/secrets.md
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${target}/comments" \
+            -f body="$(cat /tmp/secrets.md)" >/dev/null
+
+  sast:
+    name: SAST (Semgrep)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-24.04
+    container:
+      image: returntocorp/semgrep:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan
+        run: semgrep ci --config auto --config .semgrep.yml --metrics off
+        env:
+          SEMGREP_RULES: p/owasp-top-ten p/java p/security-audit
+
+  dependencies:
+    name: Dependency scan
+    runs-on: ubuntu-24.04
+    # Advisory, not a gate. Trivy already fails the build on CRITICAL and HIGH findings
+    # in the image that actually ships, which is the better signal because it scans the
+    # built artifact rather than the dependency graph. This job exists to publish the
+    # OWASP report, and needs an NVD API key to be useful: see the first step.
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for an NVD API key
+        id: nvd
+        # dependency-check 10.x downloads the NVD cache on first run. Without an API key
+        # that download is rate limited hard enough to exceed any sane job timeout: this
+        # job ran 69 minutes and was still going before it was bounded. Rather than burn
+        # 25 minutes to reach a timeout that marks the whole run cancelled, the scan is
+        # skipped with an explicit notice when the key is absent. It is a notice, not a
+        # silent skip, so the absence stays visible on every run.
+        run: |
+          if [ -n "${NVD_API_KEY:-}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "NVD_API_KEY is set; running the OWASP scan."
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=OWASP dependency-check skipped::No NVD_API_KEY secret, so dependency-check cannot fetch the NVD cache within the job timeout. Trivy still gates the shipped image on CRITICAL and HIGH. Add an NVD_API_KEY repository secret to enable this advisory scan."
+          fi
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+      - uses: actions/setup-java@v5
+        if: steps.nvd.outputs.present == 'true'
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+      - name: OWASP dependency-check (backend)
+        if: steps.nvd.outputs.present == 'true'
+        working-directory: backend
+        run: |
+          status=0
+          mvn -B -ntp -DskipTests "-DnvdApiKey=${NVD_API_KEY}" \
+            org.owasp:dependency-check-maven:10.0.4:aggregate || status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "::warning title=dependency-check::exited ${status}; the report artifact may be incomplete or absent"
+          fi
+          # Deliberately not gating: see the job comment above.
+          exit 0
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+      - name: Upload dependency-check report
+        if: always() && steps.nvd.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: backend/target/dependency-check-report.html
+          if-no-files-found: ignore
+
+  iac:
+    name: IaC validation
+    needs: changes
+    if: needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install helm and terraform
+        shell: bash
+        run: |
+          # No `set -e`/`pipefail` here on purpose. A previous revision of this step
+          # ended in `terraform version | head -1`: head closes the pipe, terraform
+          # takes SIGPIPE, and under pipefail that is exit 141 - the step failed for a
+          # reason that had nothing to do with terraform. `curl | bash` has the same
+          # exposure. Output goes to /tmp/iac.log so the report step can post it;
+          # Actions step logs cannot be read from outside the runner.
+          set -uo pipefail
+          {
+            curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+            curl -fsSL -o tf.zip https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip
+            # Extract into an empty directory. The checkout root has its own
+            # terraform/ directory, and `unzip` asks "replace terraform?" before
+            # clobbering it; with no tty it reads EOF, answers "[N]one" and exits 1.
+            # Reproduced locally with the identical message.
+            rm -rf /tmp/tf-bin
+            mkdir -p /tmp/tf-bin
+            unzip -q -o tf.zip -d /tmp/tf-bin
+            sudo install -m 0755 /tmp/tf-bin/terraform /usr/local/bin/terraform
+            echo "== versions"
+            helm version --short
+            terraform version
+          } > /tmp/iac.log 2>&1
+          status=$?
+          cat /tmp/iac.log
+          exit $status
+
+      - name: helm lint and template
+        shell: bash
+        run: |
+          set -uo pipefail
+          status=0
+          # Redirected, not piped: a pipe would run the block in a subshell and the
+          # status captured inside it would never reach this shell.
+          {
+            echo "== helm lint (default values)"
+            helm lint deploy/helm/hatis-platform --strict || status=$?
+            echo "== helm template (production values)"
+            helm template hatis deploy/helm/hatis-platform \
+              --set existingSecret=hatis-platform-secrets \
+              --values deploy/helm/values/production.yaml > /tmp/rendered.yaml || status=$?
+            echo "== rendered bytes: $(wc -c < /tmp/rendered.yaml 2>/dev/null || echo 0)"
+            echo "== kubectl dry-run (advisory only)"
+            kubectl apply --dry-run=client -f /tmp/rendered.yaml || true
+          } >> /tmp/iac.log 2>&1
+          cat /tmp/iac.log
+          exit $status
+
+      - name: terraform validate
+        shell: bash
+        run: |
+          set -uo pipefail
+          status=0
+          for module in aws-state-tier hatis-install; do
+            echo "== terraform init $module"
+            terraform -chdir="terraform/modules/$module" init -backend=false -input=false 2>&1 \
+              | tee -a /tmp/iac.log || status=1
+            echo "== terraform validate $module"
+            terraform -chdir="terraform/modules/$module" validate 2>&1 \
+              | tee -a /tmp/iac.log || status=1
+          done
+          exit $status
+
+      - name: Report IaC failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "### IaC validation failed for ${GITHUB_SHA::7}"
+            echo '```'
+            tail -n 120 /tmp/iac.log 2>/dev/null || echo "(no IaC output captured - the failure was before any step wrote to the log)"
+            echo '```'
+          } > /tmp/iac-body.md
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
+            -f body="$(cat /tmp/iac-body.md)" >/dev/null || true
+
+  image:
+    name: Build and scan container image
+    needs: backend
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        shell: bash
+        run: |
+          set -uo pipefail
+          docker build \
+            -f deploy/docker/Dockerfile.platform \
+            -t "${REGISTRY}/${IMAGE_NAME}:${GITHUB_SHA}" \
+            -t "${REGISTRY}/${IMAGE_NAME}:latest" \
+            . 2>&1 | tee /tmp/image-build.log
+
+      - name: Save image for scanning
+        run: docker save "${REGISTRY}/${IMAGE_NAME}:${GITHUB_SHA}" -o /tmp/hatis-platform.tar
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          input: /tmp/hatis-platform.tar
+          format: table
+          # Captured so the report step can post the findings. Without this the only
+          # record is the runner log, and the report step ends up posting the Maven
+          # build output - which says nothing about why a scan failed.
+          output: /tmp/trivy-image.txt
+          exit-code: "1"
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Generate SBOM
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          input: /tmp/hatis-platform.tar
+          format: cyclonedx
+          output: sbom.cdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
+
+      - name: Push image (main only)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "${REGISTRY}/${IMAGE_NAME}:${GITHUB_SHA}"
+          docker push "${REGISTRY}/${IMAGE_NAME}:latest"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Report build failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "### Image pipeline failed for \`${GITHUB_SHA::7}\`"
+            if [ -s /tmp/trivy-image.txt ]; then
+              echo '```'
+              # The findings table first: that is what a scan failure is about.
+              grep -E "CRITICAL|HIGH|CVE-|Library|Vulnerability|===" /tmp/trivy-image.txt | head -n 80
+              echo '```'
+            else
+              echo "_No scan output captured, so the failure was before the scan._"
+            fi
+            echo '```'
+            tail -n 60 /tmp/image-build.log 2>/dev/null || echo "no build log produced"
+            echo '```'
+          } > /tmp/body.md
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
+            -f body="$(cat /tmp/body.md)" >/dev/null || true

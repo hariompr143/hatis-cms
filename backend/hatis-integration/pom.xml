@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>com.hatis.platform</groupId>
+    <artifactId>hatis-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>hatis-integration</artifactId>
+  <name>HATIS Platform :: Integration</name>
+  <description>External integrations, webhook delivery and SCM connectors.</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.hatis.platform</groupId>
+      <artifactId>hatis-shared</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.hatis.platform</groupId>
+      <artifactId>hatis-audit</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.hatis.platform</groupId>
+      <artifactId>hatis-authorization</artifactId>
+    </dependency>
+    <!-- TenantKeyService, the single reader of org_organizations.encryption_key_*.
+         Reaching for it rather than re-reading those columns keeps the fallback to the
+         platform key defined in one place. identity depends only on shared, audit and
+         the JWT/crypto libraries, so this edge cannot close a cycle. -->
+    <dependency>
+      <groupId>com.hatis.platform</groupId>
+      <artifactId>hatis-identity</artifactId>
+    </dependency>
+    <!-- Provides io.swagger.v3.oas.annotations for the REST adapter. JPA, Spring MVC
+         and Jackson arrive transitively through hatis-shared; webflux below is for
+         outbound webhook dispatch, not for serving requests. -->
+    <dependency>
+      <groupId>org.springdoc</groupId>
+      <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webflux</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

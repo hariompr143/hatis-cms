@@ -1,0 +1,67 @@
+# syntax=docker/dockerfile:1
+#
+# Production image for the HATIS platform (API and worker roles share one image;
+# HATIS_ROLE selects the behaviour). Multi-stage so that no build toolchain,
+# source code or Maven cache ships to production.
+
+# ---------------------------------------------------------------------------
+# Stage 1: build
+# ---------------------------------------------------------------------------
+FROM maven:3.9-eclipse-temurin-21 AS build
+WORKDIR /workspace
+
+# Copy POMs first so the dependency layer is cached across source-only changes.
+COPY backend/pom.xml ./
+COPY backend/hatis-shared/pom.xml           hatis-shared/
+COPY backend/hatis-audit/pom.xml            hatis-audit/
+COPY backend/hatis-identity/pom.xml         hatis-identity/
+COPY backend/hatis-organization/pom.xml     hatis-organization/
+COPY backend/hatis-authorization/pom.xml    hatis-authorization/
+COPY backend/hatis-cms/pom.xml              hatis-cms/
+COPY backend/hatis-assets/pom.xml           hatis-assets/
+COPY backend/hatis-workflow/pom.xml         hatis-workflow/
+COPY backend/hatis-infrastructure/pom.xml   hatis-infrastructure/
+COPY backend/hatis-domains/pom.xml          hatis-domains/
+COPY backend/hatis-deployment/pom.xml       hatis-deployment/
+COPY backend/hatis-billing/pom.xml          hatis-billing/
+COPY backend/hatis-analytics/pom.xml        hatis-analytics/
+COPY backend/hatis-integration/pom.xml      hatis-integration/
+COPY backend/hatis-notification/pom.xml     hatis-notification/
+COPY backend/hatis-api/pom.xml              hatis-api/
+RUN mvn -B -ntp -q dependency:go-offline -DskipTests || true
+
+COPY backend/ ./
+RUN mvn -B -ntp -DskipTests package \
+ && cp hatis-api/target/hatis-api-*.jar /workspace/app.jar
+
+# ---------------------------------------------------------------------------
+# Stage 2: runtime
+# ---------------------------------------------------------------------------
+FROM eclipse-temurin:21-jre-jammy AS runtime
+
+# tini gives correct PID 1 signal handling so graceful shutdown works.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tini curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --system --gid 10001 hatis \
+ && useradd  --system --uid 10001 --gid 10001 --home-dir /app --shell /usr/sbin/nologin hatis
+
+WORKDIR /app
+COPY --from=build /workspace/app.jar /app/app.jar
+
+# Read-only root filesystem; only /tmp and /app/work are writable.
+RUN mkdir -p /app/work /tmp/hatis \
+ && chown -R 10001:10001 /app /tmp/hatis
+
+USER 10001
+EXPOSE 8080
+
+ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+UseContainerSupport -XX:+ExitOnOutOfMemoryError -Djava.security.egd=file:/dev/./urandom" \
+    HATIS_ROLE=api \
+    SPRING_PROFILES_ACTIVE=production
+
+HEALTHCHECK --interval=15s --timeout=3s --start-period=60s --retries=3 \
+  CMD curl -fsS http://127.0.0.1:8080/internal/health/liveness || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["java", "-jar", "/app/app.jar"]
