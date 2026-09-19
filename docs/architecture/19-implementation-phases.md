@@ -46,7 +46,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/`; image builds and Trivy exits clean at CRITICAL,HIGH (§19.6) |
 | Architecture boundaries enforced at build time | Done | `HexagonalArchitectureTest` |
 | Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`; lint, typecheck, tests and `next build` green in CI (§19.6) |
-| CI green end to end | Done | All eight jobs green in run `35433361098`. See §19.6. |
+| CI green end to end | Done | All eight jobs green in run `35436293266`. See §19.6. |
 | GitHub integration: inbound webhooks and their management | Done | `hatis-integration`; HMAC-verified push receiver plus create/connect/rotate/disconnect, 48 tests |
 | Outbound webhook security core | Done | `hatis-integration`; `WebhookUrlValidator` (SSRF target checks) and `WebhookSigner` (delivery HMAC), 50 tests. Delivery itself is not delivered — see the outbound row below. |
 | Outbound webhook persistence | Done | `WebhookEndpoint` and `WebhookDelivery` map `int_webhook_endpoints` and `int_webhook_deliveries`, including the platform's first PostgreSQL `text[]` column; `V1_014` adds the bookkeeping columns deliveries need. `WebhookEndpointPersistenceIT` round-trips both against PostgreSQL 16 under forced RLS, 9 tests. |
@@ -90,19 +90,20 @@ customer content into a third-party model without a per-tenant control.
 
 Stated plainly, because a claim of "done" without a named check is worth nothing.
 
-**Verified in GitHub Actions, run `35433361098` on commit `fc3e8e5` — all eight jobs
+**Verified in GitHub Actions, run `35436293266` on commit `77c3c45` — all eight jobs
 green:**
 
 - **Backend (Java 21 / Spring Boot): success.** All 17 modules compile and
-  `mvn verify` completes. The run reports **251 tests, 0 failures, 0 errors,
-  0 skipped** across 21 classes: `StorageKeysTest` 7, `AssetTest` 16,
+  `mvn verify` completes. The run reports **255 tests, 0 failures, 0 errors,
+  0 skipped** across 22 classes: `StorageKeysTest` 7, `AssetTest` 16,
   `ContentBodyValidatorTest` 12, `RichTextSanitizerTest` 16, `ReleaseTest` 9,
   `HexagonalArchitectureTest` 7, `GitHubSignatureVerifierTest` 19,
   `GitHubPushEventTest` 9, `InboundWebhookServiceTest` 11, `IntegrationServiceTest` 9,
   `WebhookEndpointServiceTest` 11, `WebhookDispatcherTest` 13, `WebhookEventSinkTest` 5,
   `WebhookUrlValidatorTest` 42, `WebhookSignerTest` 10, `OutboxRelayTest` 8,
   `OutboxWorkTest` 8, `OutboxEntryPersistenceIT` 10, `WebhookEndpointPersistenceIT` 9,
-  `TenantIsolationIT` 9 and `OutboxRelayRlsIT` 11, the last four against a real
+  `TenantIsolationIT` 9, `OutboxRelayRlsIT` 11 and
+  `JsonbDataSourceConfigurationIT` 4, the last five against a real
   PostgreSQL 16 under Testcontainers. Those per-class numbers are published as a
   commit comment on every run, so the count is checkable rather than asserted.
 - **Build and scan container image: success.** The image builds from
