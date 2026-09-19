@@ -42,7 +42,11 @@ public class User extends BaseEntity {
         REQUIRED
     }
 
-    @Column(name = "email", nullable = false, length = 320, updatable = false)
+        // citext, not varchar: the unique index on email is case-insensitive and that is
+    // load-bearing. columnDefinition carries the exact type name so that
+    // ddl-auto: validate accepts it; without it a String expects varchar.
+    @Column(name = "email", nullable = false, length = 320, updatable = false,
+            columnDefinition = "citext")
     private String email;
 
     @Column(name = "email_verified", nullable = false)

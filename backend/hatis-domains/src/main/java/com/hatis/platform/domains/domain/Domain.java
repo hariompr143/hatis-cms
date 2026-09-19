@@ -55,11 +55,16 @@ public class Domain extends TenantScopedEntity {
     @Column(name = "environment_id", nullable = false, updatable = false)
     private UUID environmentId;
 
-    @Column(name = "hostname", nullable = false, length = 253, updatable = false)
+        // citext, not varchar: hostname uniqueness is case-insensitive and that is
+    // load-bearing. columnDefinition carries the exact type name so that
+    // ddl-auto: validate accepts it; without it a String expects varchar.
+    @Column(name = "hostname", nullable = false, length = 253, updatable = false,
+            columnDefinition = "citext")
     private String hostname;
 
     /** The apex domain, used for rate limiting registrations per registrable domain. */
-    @Column(name = "apex_domain", nullable = false, length = 253, updatable = false)
+        @Column(name = "apex_domain", nullable = false, length = 253, updatable = false,
+            columnDefinition = "citext")
     private String apexDomain;
 
     @Enumerated(EnumType.STRING)

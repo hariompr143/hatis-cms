@@ -42,7 +42,11 @@ public class Organization extends TenantScopedEntity {
     @Column(name = "name", nullable = false, length = 200)
     private String name;
 
-    @Column(name = "slug", nullable = false, length = 63, unique = true, updatable = false)
+        // citext, not varchar: slug uniqueness is case-insensitive and that is
+    // load-bearing. columnDefinition carries the exact type name so that
+    // ddl-auto: validate accepts it; without it a String expects varchar.
+    @Column(name = "slug", nullable = false, length = 63, unique = true, updatable = false,
+            columnDefinition = "citext")
     private String slug;
 
     @Enumerated(EnumType.STRING)
