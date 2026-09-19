@@ -206,12 +206,19 @@ class OutboxEntryPersistenceIT {
         // will never match. Verified against this schema: the same document written with
         // eventType first comes back with data first.
         assertThat(stored).isNotEqualTo(written);
-        assertThat(stored).startsWith("{\"data\": ");
+        // The whole text, not a substring of it. Asserting .contains("}\"eventType\"")
+        // failed, because jsonb also puts a space after every comma, so the real separator
+        // is "}, " - a detail that is easy to get wrong by eye and impossible to get wrong
+        // against the server's own output. Keys are ordered by length and then bytewise:
+        // data, eventType, occurredAt, eventVersion, organizationId.
+        String normalised = "{\"data\": {\"itemId\": \"abc\"}, "
+                + "\"eventType\": \"cms.content.published\", "
+                + "\"occurredAt\": \"2026-09-19T10:00:00Z\", "
+                + "\"eventVersion\": 1, "
+                + "\"organizationId\": \"" + org + "\"}";
         assertThat(stored)
-                .as("sorted by key length, then bytewise: data, eventType, occurredAt, "
-                        + "eventVersion, organizationId")
-                .contains("}\"eventType\"")
-                .doesNotContain("{\"eventType\"");
+                .as("verified byte for byte against PostgreSQL 16 on this schema")
+                .isEqualTo(normalised);
         assertThat(readTree(stored)).isEqualTo(readTree(written));
     }
 
