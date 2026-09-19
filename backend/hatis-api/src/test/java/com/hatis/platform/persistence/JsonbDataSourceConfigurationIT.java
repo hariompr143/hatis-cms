@@ -13,7 +13,9 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.yaml.snakeyaml.Yaml;
 
+import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -91,6 +93,8 @@ class JsonbDataSourceConfigurationIT {
     @Test
     @DisplayName("application.yml sets the driver property the jsonb columns depend on")
     void theShippedConfigurationSetsTheDriverProperty() {
+        probeConfigurationVisibility();
+
         Map<String, Object> properties = shippedDataSourceProperties();
 
         assertThat(properties)
@@ -156,28 +160,67 @@ class JsonbDataSourceConfigurationIT {
 
     /**
      * {@code spring.datasource.hikari.data-source-properties} from the application's own
-     * configuration file, which is on this module's classpath because it is a main
-     * resource.
+     * configuration file.
+     *
+     * <p>Read from the module source tree rather than from the classpath, for the same
+     * reason {@link #migrationLocation} does it. The first version of this test used
+     * {@code getResourceAsStream("/application.yml")} and it returned {@code null} under
+     * failsafe, even though the file is a tracked main resource and the compiled classes
+     * beside it load fine; {@link #probeConfigurationVisibility} records what that
+     * classloader actually resolves, because whether the packaged application can see its
+     * own configuration is not something to guess at.
      */
     @SuppressWarnings("unchecked")
     private static Map<String, Object> shippedDataSourceProperties() {
-        try (InputStream configuration = JsonbDataSourceConfigurationIT.class
-                .getResourceAsStream("/application.yml")) {
-            assertThat(configuration)
-                    .as("application.yml must be on the test classpath, or this test would "
-                            + "be reading nothing and asserting nothing")
-                    .isNotNull();
+        try (InputStream configuration = Files.newInputStream(shippedConfigurationFile())) {
             Map<String, Object> root = new Yaml().load(configuration);
             Map<String, Object> spring = (Map<String, Object>) root.get("spring");
             Map<String, Object> datasource = (Map<String, Object>) spring.get("datasource");
             Map<String, Object> hikari = (Map<String, Object>) datasource.get("hikari");
             Map<String, Object> properties =
                     (Map<String, Object>) hikari.get("data-source-properties");
-            assertThat(properties).as("no data-source-properties block in application.yml").isNotNull();
+            assertThat(properties)
+                    .as("application.yml has no spring.datasource.hikari.data-source-properties")
+                    .isNotNull();
             return properties;
-        } catch (Exception e) {
+        } catch (IOException e) {
             throw new IllegalStateException("could not read application.yml", e);
         }
+    }
+
+    private static java.nio.file.Path shippedConfigurationFile() {
+        for (String candidate : new String[]{
+                "src/main/resources/application.yml",
+                "backend/hatis-api/src/main/resources/application.yml"}) {
+            java.nio.file.Path path = java.nio.file.Path.of(candidate);
+            if (Files.isRegularFile(path)) {
+                return path.toAbsolutePath();
+            }
+        }
+        throw new IllegalStateException("application.yml not found; working directory is "
+                + java.nio.file.Path.of(".").toAbsolutePath());
+    }
+
+    /**
+     * Prints, under a marker the build report collects, what the test classloader resolves
+     * for {@code application.yml} and where the class itself was loaded from. A main
+     * resource that is invisible to the classloader next to its own compiled classes is
+     * worth knowing about, and this is the cheapest way to find out which it is.
+     */
+    private static void probeConfigurationVisibility() {
+        ClassLoader loader = JsonbDataSourceConfigurationIT.class.getClassLoader();
+        System.out.println("CLASSPATH-PROBE workingDirectory="
+                + java.nio.file.Path.of(".").toAbsolutePath());
+        System.out.println("CLASSPATH-PROBE classLoader=" + loader);
+        System.out.println("CLASSPATH-PROBE classLoadedFrom="
+                + JsonbDataSourceConfigurationIT.class
+                        .getResource("JsonbDataSourceConfigurationIT.class"));
+        System.out.println("CLASSPATH-PROBE applicationYmlViaClass="
+                + JsonbDataSourceConfigurationIT.class.getResource("/application.yml"));
+        System.out.println("CLASSPATH-PROBE applicationYmlViaClassLoader="
+                + loader.getResource("application.yml"));
+        System.out.println("CLASSPATH-PROBE migrationDirViaClassLoader="
+                + loader.getResource("db/migration"));
     }
 
     /**
