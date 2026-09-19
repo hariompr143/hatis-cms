@@ -216,8 +216,15 @@ jobs:
         run: |
           report=$(find . -maxdepth 3 -name 'gitleaks*' \
                      \( -name '*.sarif' -o -name '*.json' \) 2>/dev/null | head -1)
+          # On a pull_request event GITHUB_SHA is the synthesized merge commit, which
+          # is not a commit anyone can browse and whose comments the REST API does
+          # not list. The head SHA is a real commit, so the report stays findable.
+          target="${GITHUB_SHA}"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            target=$(python3 -c 'import json, os; print(json.load(open(os.environ["GITHUB_EVENT_PATH"]))["pull_request"]["head"]["sha"])')
+          fi
           {
-            echo "### Secret scan (\`${GITHUB_SHA::7}\`)"
+            echo "### Secret scan (\`${target::7}\`)"
             echo
             if [ -z "$report" ]; then
               echo "gitleaks failed but wrote no report file, so there is nothing to"
@@ -247,7 +254,7 @@ jobs:
           PY
             fi
           } > /tmp/secrets.md
-          gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" \
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/commits/${target}/comments" \
             -f body="$(cat /tmp/secrets.md)" >/dev/null
 
   sast:
