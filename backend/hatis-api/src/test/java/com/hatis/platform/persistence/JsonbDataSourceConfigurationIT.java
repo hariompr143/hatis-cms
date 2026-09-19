@@ -8,6 +8,15 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.postgresql.ds.PGSimpleDataSource;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.bind.PropertySourcesPlaceholdersResolver;
+import org.springframework.boot.context.properties.source.ConfigurationPropertySource;
+import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
+import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.core.env.MutablePropertySources;
+import org.springframework.core.env.PropertySource;
+import org.springframework.core.io.FileSystemResource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -21,8 +30,10 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.StreamSupport;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -50,6 +61,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * restating it, which is what stops the two from drifting. Delete the line from the YAML
  * and {@link #theShippedConfigurationSetsTheDriverProperty} fails, rather than the suite
  * quietly continuing to test a configuration nothing uses.
+ *
+ * <p>The chain has one more link than that, and it is Spring's. In the running application
+ * the properties reach {@code HikariConfig} through
+ * {@code @ConfigurationProperties("spring.datasource.hikari")}, so
+ * {@link #springBindsTheShippedYamlOntoThePool} runs Boot's own {@code Binder} over the
+ * shipped file and the two write tests build their pool from what it produces. Without
+ * that, the test would be asserting something about a property map a test assembled by
+ * hand and calling it the application's configuration.
  *
  * <h2>Why the role is asserted</h2>
  *
@@ -104,12 +123,30 @@ class JsonbDataSourceConfigurationIT {
     }
 
     @Test
+    @DisplayName("Spring Boot's binder carries the property from the shipped YAML onto the pool")
+    void springBindsTheShippedYamlOntoThePool() {
+        HikariConfig bound = poolConfiguredBySpring();
+
+        assertThat(bound.getDataSourceProperties())
+                .as("the application reaches the driver through @ConfigurationProperties, "
+                        + "not through a property map copied by hand, so this is the one hop "
+                        + "in the chain that no test had executed")
+                .containsEntry("stringtype", "unspecified");
+
+        // These two only arrive if the whole prefix bound and the placeholder in
+        // maximum-pool-size was resolved, so they are what distinguishes a real binding
+        // from a map that happens to hold one expected key.
+        assertThat(bound.getPoolName()).isEqualTo("hatis-pool");
+        assertThat(bound.getMaximumPoolSize()).isEqualTo(20);
+    }
+
+    @Test
     @DisplayName("a jsonb write succeeds through a pool built from the shipped configuration")
     void aJsonbWriteThroughTheConfiguredPoolSucceeds() throws Exception {
         UUID organizationId = UUID.randomUUID();
         UUID eventId = UUID.randomUUID();
 
-        try (HikariDataSource pool = poolWith(shippedDataSourceProperties());
+        try (HikariDataSource pool = poolFrom(poolConfiguredBySpring());
              Connection connection = pool.getConnection()) {
             insertOutboxRow(connection, organizationId, eventId);
 
@@ -157,7 +194,7 @@ class JsonbDataSourceConfigurationIT {
     @Test
     @DisplayName("the pool connects as the application role, not as a superuser")
     void thePoolConnectsAsTheApplicationRole() throws Exception {
-        try (HikariDataSource pool = poolWith(shippedDataSourceProperties());
+        try (HikariDataSource pool = poolFrom(poolConfiguredBySpring());
              Connection connection = pool.getConnection();
              Statement statement = connection.createStatement();
              ResultSet rows = statement.executeQuery(
@@ -240,6 +277,56 @@ class JsonbDataSourceConfigurationIT {
     /**
      * A pool configured the way {@code application.yml} configures the production one:
      * JDBC URL plus the data-source properties, which Hikari hands to the driver.
+     */
+    /**
+     * The pool configuration Spring Boot produces from the shipped file - the same thing
+     * {@code @ConfigurationProperties("spring.datasource.hikari")} does when the
+     * application starts, which until now nothing in this repository had ever run.
+     *
+     * <p>The placeholder resolver is not optional. {@code application.yml} carries
+     * {@code maximum-pool-size: "${HATIS_DB_POOL_MAX:20}"}, and a binder without one tries
+     * to convert that literal into an {@code int} and fails, which would read as a broken
+     * configuration rather than as a missing step in the test.
+     */
+    private static HikariConfig poolConfiguredBySpring() {
+        java.nio.file.Path file = shippedConfigurationFile();
+        List<PropertySource<?>> loaded;
+        try {
+            loaded = new YamlPropertySourceLoader()
+                    .load("application.yml", new FileSystemResource(file.toFile()));
+        } catch (IOException e) {
+            throw new IllegalStateException("could not load " + file, e);
+        }
+        assertThat(loaded).as("YamlPropertySourceLoader read nothing from %s", file).isNotEmpty();
+
+        MutablePropertySources environment = new MutablePropertySources();
+        loaded.forEach(environment::addLast);
+
+        List<ConfigurationPropertySource> sources = StreamSupport
+                .stream(ConfigurationPropertySources.from(loaded).spliterator(), false)
+                .toList();
+
+        Binder binder = new Binder(sources, new PropertySourcesPlaceholdersResolver(environment));
+        return binder.bind("spring.datasource.hikari", Bindable.of(HikariConfig.class))
+                .orElseThrow(() -> new IllegalStateException(
+                        "spring.datasource.hikari did not bind onto HikariConfig"));
+    }
+
+    /**
+     * A pool built from a configuration Spring has already bound, with only the JDBC
+     * coordinates supplied - in {@code application.yml} those come from the environment,
+     * and they are not what this test is about.
+     */
+    private static HikariDataSource poolFrom(HikariConfig bound) {
+        bound.setJdbcUrl(POSTGRES.getJdbcUrl());
+        bound.setUsername("hatis_app");
+        bound.setPassword(APP_PASSWORD);
+        return new HikariDataSource(bound);
+    }
+
+    /**
+     * A pool built by hand from a property map, for the negative case: identical in every
+     * respect to the one Spring binds except that the shipped properties are absent.
      */
     private static HikariDataSource poolWith(Map<String, Object> dataSourceProperties) {
         HikariConfig config = new HikariConfig();
