@@ -122,8 +122,8 @@ green:**
 
 **A green build hid a defect that broke six write paths, and only a missing test found it.**
 Six entities map a Java `String` onto a PostgreSQL `jsonb` column through
-`columnDefinition = "jsonb"`: `OutboxEntry.payload`, `AuditLog.detail`, `ContentType.fields`,
-`ContentVersion.body`, `InboundIntegration.configuration` and `IdempotencyRecord.response`.
+`columnDefinition = "jsonb"`: `OutboxEntry.payload`, `AuditLog.metadata`, `ContentType.schema`,
+`ContentVersion.body`, `InboundIntegration.config` and `IdempotencyRecord.responseBody`.
 pgjdbc's `stringtype` property defaults to `varchar`, so a `String` parameter reaches the
 server typed as `character varying`, and PostgreSQL refuses to assign that to `jsonb`:
 `ERROR: column "payload" is of type jsonb but expression is of type character varying`.
@@ -138,9 +138,25 @@ annotations were correct; the driver was not, and that is not visible from the c
 pgjdbc's `stringtype=unspecified`, set on the Hikari pool under
 `spring.datasource.hikari.data-source-properties` in `application.yml` — on the pool rather
 than in the URL, because the URL is supplied per environment and a fix that depends on
-whoever configures it remembering is not a fix. One of the nine tests asserts the identical
+whoever configures it remembering is not a fix. One of the ten tests asserts the identical
 insert is still *rejected* without the property, so the setting cannot be removed as
 apparently-redundant configuration.
+
+That left a narrower version of the same mistake open, and it is worth naming because the
+test was green while it existed. `OutboxEntryPersistenceIT` reaches the driver through
+`hibernate.connection.stringtype`, on a bootstrap that builds its own connections; production
+reaches it through the Hikari pool. Those are different mechanisms, so a green IT proved the
+Hibernate half and said nothing about the configuration the application actually boots with —
+the fix could have been correct in the test and absent in production. `JsonbDataSourceConfigurationIT`
+closes it by reading `spring.datasource.hikari.data-source-properties` back out of
+`application.yml` rather than restating it, building a pool from what it reads, and asserting
+that a `jsonb` write succeeds through that pool and is rejected through an otherwise
+identical one without the properties. Because the expectation is read from the shipped file,
+deleting the line fails that test instead of quietly going untested. The chain it exercises is
+`HikariConfig.addDataSourceProperty` → `config.getDataSourceProperties()` →
+`new DriverDataSource(jdbcUrl, driverClassName, dataSourceProperties, …)` →
+`driver.connect(jdbcUrl, driverProperties)`, which is where the property finally reaches
+pgjdbc.
 
 Fixing that surfaced a second fact, found because the test asserted the payload survived the
 round trip. It does, but not as text: PostgreSQL's `jsonb` normalises on the way in, sorting

@@ -23,15 +23,18 @@ spring:
         #   ERROR: column "payload" is of type jsonb but expression is of type character varying
         #
         # Six entities map a String onto a jsonb column - OutboxEntry.payload,
-        # AuditLog.detail, ContentType.fields, ContentVersion.body,
-        # InboundIntegration.configuration and IdempotencyRecord.response - so without
+        # AuditLog.metadata, ContentType.schema, ContentVersion.body,
+        # InboundIntegration.config and IdempotencyRecord.responseBody - so without
         # this, no event is ever written to the outbox, no audit record is written, no
         # content version is saved and no idempotency response is stored. It is set on the
         # pool rather than in the URL because the URL is supplied per environment and this
         # must not depend on whoever configures it remembering.
         #
-        # OutboxEntryPersistenceIT asserts both halves: that writes succeed with the
-        # property, and that the identical insert is rejected without it.
+        # OutboxEntryPersistenceIT proves the property works through Hibernate.
+        # JsonbDataSourceConfigurationIT proves it works through here: it reads this
+        # block back out of this file, builds a pool from it, and asserts that a jsonb
+        # write succeeds with the properties and is rejected without them. Deleting the
+        # line therefore fails that test rather than quietly going untested.
         stringtype: unspecified
   jpa:
     open-in-view: false

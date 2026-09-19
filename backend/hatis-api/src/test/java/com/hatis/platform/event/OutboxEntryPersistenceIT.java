@@ -40,9 +40,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * <h2>Why this test exists</h2>
  *
  * Six entities map a Java {@code String} onto a PostgreSQL {@code jsonb} column through
- * {@code columnDefinition = "jsonb"}: {@code OutboxEntry.payload}, {@code AuditLog.detail},
- * {@code ContentType.fields}, {@code ContentVersion.body},
- * {@code InboundIntegration.configuration} and {@code IdempotencyRecord.response}. None of
+ * {@code columnDefinition = "jsonb"}: {@code OutboxEntry.payload}, {@code AuditLog.metadata},
+ * {@code ContentType.schema}, {@code ContentVersion.body},
+ * {@code InboundIntegration.config} and {@code IdempotencyRecord.responseBody}. None of
  * them had ever been flushed to a database by anything in this repository.
  *
  * <p>That matters because the mapping is a question about the driver, not about the
