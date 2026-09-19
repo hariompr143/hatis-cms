@@ -50,6 +50,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * so a mapping that drifted from its table would have been found by a customer's deploy
  * rather than by the build.
  *
+ * <p>The first run of this test found a real disagreement rather than passing, which is
+ * the result that justifies it: {@code aud_audit_logs.previous_hash} is {@code char(64)}
+ * and the mapping declared only a length, so Hibernate inferred {@code varchar}. Setting
+ * {@code columnDefinition = "char(64")} did <em>not</em> fix it, and the reason is worth
+ * keeping: Hibernate takes {@code columnDefinition} as the expected type <em>name</em> but
+ * still derives the JDBC type code from the Java field type, so a {@code String} keeps
+ * expecting {@code Types.VARCHAR} whatever the annotation says. The mismatch is between
+ * {@code Types#CHAR} and {@code Types#VARCHAR}, and no amount of annotation text closes it.
+ *
  * <p>{@code tools/check_entity_schema.py} narrows the gap but cannot close it: it parses
  * annotations and the migration SQL textually, so it cannot see a column added by a later
  * {@code ALTER}, cannot apply Hibernate's naming strategy, and cannot know what Hibernate
@@ -140,14 +149,36 @@ class EntitySchemaValidationIT {
     @DisplayName("every mapping agrees with the schema the migrations produce")
     void everyEntityMappingAgreesWithTheMigratedSchema() {
         List<Class<?>> entities = allEntityClasses();
+        List<String> disagreements = new ArrayList<>();
 
-        // This is the check the application performs on every start, run here instead of
-        // on a customer's deploy. It writes nothing: validate only reads the schema.
-        try (SessionFactory sessionFactory = sessionFactoryWith(entities, true)) {
-            assertThat(sessionFactory.getMetamodel().getEntities())
-                    .as("Hibernate must have accepted all of the mappings it was given")
-                    .hasSize(entities.size());
+        // One session factory per entity rather than one for all of them. Hibernate
+        // reports the first disagreement it reaches and stops, so a single build surfaces
+        // one problem per run and costs a build cycle for each. Validating them separately
+        // lists every disagreement at once, which is the difference between finding this
+        // out in one run and finding it out over a week.
+        for (Class<?> entity : entities) {
+            try (SessionFactory sessionFactory = sessionFactoryWith(List.of(entity), true)) {
+                assertThat(sessionFactory.getMetamodel().getEntities())
+                        .as("%s must be the only entity registered, or a pass says nothing "
+                                + "about it", entity.getSimpleName())
+                        .hasSize(1);
+            } catch (RuntimeException e) {
+                disagreements.add(entity.getSimpleName() + " -> " + firstLineOf(e));
+            }
         }
+
+        assertThat(disagreements)
+                .as("each of the %d mappings was validated against the migrated schema on "
+                        + "its own, so this is the complete list of disagreements rather "
+                        + "than only the first", entities.size())
+                .isEmpty();
+    }
+
+    private static String firstLineOf(RuntimeException e) {
+        String message = String.valueOf(e.getMessage());
+        int end = message.indexOf('\n');
+        return e.getClass().getSimpleName() + ": "
+                + (end < 0 ? message : message.substring(0, end)).trim();
     }
 
     @Test
