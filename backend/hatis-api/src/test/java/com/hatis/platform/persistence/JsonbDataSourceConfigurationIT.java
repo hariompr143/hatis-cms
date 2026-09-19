@@ -112,13 +112,27 @@ class JsonbDataSourceConfigurationIT {
         try (HikariDataSource pool = poolWith(shippedDataSourceProperties());
              Connection connection = pool.getConnection()) {
             insertOutboxRow(connection, organizationId, eventId);
-            connection.commit();
 
+            // Read before committing. The tenant binding insertOutboxRow sets is
+            // transaction-local, and row level security applies to reads too, so the same
+            // query after commit returns nothing - the row is there, the binding is not.
+            // Verified against this schema: visible in the transaction, invisible to the
+            // same role once it commits, still present to a role outside row level
+            // security. Asserting after the commit would have read as a failed write what
+            // was actually a successful one.
             assertThat(jsonbTypeOf(connection, eventId))
                     .as("the same setString call Hibernate makes, through the pool the "
                             + "application actually builds")
                     .isEqualTo("object");
+
+            connection.commit();
         }
+
+        // Committed, not merely accepted: read back through the migrator, which is outside
+        // row level security, so this is a statement about durability and not about policy.
+        assertThat(jsonbTypeOfAsMigrator(eventId))
+                .as("the row survived the commit, stored as a jsonb object")
+                .isEqualTo("object");
     }
 
     @Test
@@ -266,6 +280,24 @@ class JsonbDataSourceConfigurationIT {
     private static String jsonbTypeOf(Connection connection, UUID eventId) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(
                 "select jsonb_typeof(payload) from plat_outbox where id = ?")) {
+            statement.setObject(1, eventId);
+            try (ResultSet rows = statement.executeQuery()) {
+                assertThat(rows.next()).isTrue();
+                return rows.getString(1);
+            }
+        }
+    }
+
+    /**
+     * The stored type read through the migrator, which is the container's superuser and so
+     * sits outside row level security. Used only to confirm the row committed; who may read
+     * it is {@code TenantIsolationIT}'s subject, not this test's.
+     */
+    private static String jsonbTypeOfAsMigrator(UUID eventId) throws SQLException {
+        try (Connection connection =
+                     dataSource(POSTGRES.getUsername(), POSTGRES.getPassword()).getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "select jsonb_typeof(payload) from plat_outbox where id = ?")) {
             statement.setObject(1, eventId);
             try (ResultSet rows = statement.executeQuery()) {
                 assertThat(rows.next()).isTrue();

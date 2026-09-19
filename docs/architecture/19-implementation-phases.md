@@ -158,6 +158,27 @@ deleting the line fails that test instead of quietly going untested. The chain i
 `driver.connect(jdbcUrl, driverProperties)`, which is where the property finally reaches
 pgjdbc.
 
+Writing that test produced two findings that have nothing to do with `jsonb` and are worth
+carrying forward.
+
+The first is that **`target/classes` is not on the failsafe classpath in this build.** A
+probe printed by the test shows `application.yml` resolving to `null` both through the class
+and through its classloader, and `db/migration` resolving to `null` as well, while the test
+class itself loads from `target/test-classes` without difficulty. That is why the
+integration tests locate their migrations through a `filesystem:` path rather than
+`classpath:db/migration` — the fallback is load-bearing, not defensive, and a new test that
+reaches for a main resource through the classloader will get nothing. It is recorded here
+because the failure looks like a missing file and is not one.
+
+The second is that **a transaction-local tenant binding does not survive the commit, and row
+level security applies to reads.** `set_config('hatis.organization_id', …, true)` scopes the
+setting to the transaction, so a row inserted under it and then read back after `commit` is
+invisible to the very role that wrote it. Verified against this schema: visible inside the
+transaction, `count = 0` for the same role after commit, and still present to a role outside
+row level security. The write had succeeded; only the read had lost its binding. An
+assertion placed on the far side of a commit therefore reads as a failed write what was a
+successful one — which is how the test first failed.
+
 Fixing that surfaced a second fact, found because the test asserted the payload survived the
 round trip. It does, but not as text: PostgreSQL's `jsonb` normalises on the way in, sorting
 object keys by length and then bytewise and re-spacing the separators. Verified against this
