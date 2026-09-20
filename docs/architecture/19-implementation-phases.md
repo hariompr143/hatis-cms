@@ -46,7 +46,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/`; image builds and Trivy exits clean at CRITICAL,HIGH (§19.6) |
 | Architecture boundaries enforced at build time | Done | `HexagonalArchitectureTest` |
 | Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`; lint, typecheck, tests and `next build` green in CI (§19.6) |
-| CI green end to end | Done | All eight jobs green in run `35507775488`. See §19.6. |
+| CI green end to end | Done | All eight jobs green in run `35509303723`. See §19.6. |
 | GitHub integration: inbound webhooks and their management | Done | `hatis-integration`; HMAC-verified push receiver plus create/connect/rotate/disconnect, 48 tests |
 | Outbound webhook security core | Done | `hatis-integration`; `WebhookUrlValidator` (SSRF target checks) and `WebhookSigner` (delivery HMAC), 50 tests. Delivery itself is not delivered — see the outbound row below. |
 | Outbound webhook persistence | Done | `WebhookEndpoint` and `WebhookDelivery` map `int_webhook_endpoints` and `int_webhook_deliveries`, including the platform's first PostgreSQL `text[]` column; `V1_014` adds the bookkeeping columns deliveries need. `WebhookEndpointPersistenceIT` round-trips both against PostgreSQL 16 under forced RLS, 9 tests. |
@@ -62,7 +62,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Workflow engine | Schema (`V1_008`) and the default template are seeded; there is no service or API. |
 | Analytics | Schema (`V1_011`) only. |
 | Notification | Schema only. |
-| Integration / outbound | Delivered end to end: an event published to the outbox is drained per tenant, fanned out to subscribed endpoints, signed, delivered over an SSRF-guarded transport, and retried with backoff. Three caveats are open and stated rather than buried. **(1)** The address pinning that closes the DNS rebinding gap is argued from the code — no test in this repository opens a real socket. **(2)** A tenant data-key rotation invalidates endpoint secrets written under the previous key; `dek_id` records which key was used, but nothing re-encrypts yet. **(3)** Both background jobs walk every tenant on a fixed interval, which is the wrong shape at a few thousand organizations: most sweeps run one empty query per organization with no queued work. The replacement is a work-claim table listing only organizations with outstanding work; it is not built. Two further items were open and are now closed. `OutboxRelay` used to read `plat_outbox` with no tenant context set — that table carries forced row level security and the migrations explicitly strip `BYPASSRLS` from `hatis_app`, so the query returned an empty list rather than an error, and **no event was ever published** while every metric looked healthy. It is now two beans: `OutboxRelay` walks `plat_tenant_directory`, binds each tenant in turn, and runs a separate unbound pass for platform-wide rows, while `OutboxWork` does the reading and publishing inside that tenant's transaction. The split is the fix, not tidying — Spring applies `@TenantTransactional` through a proxy, so a bean calling its own transactional method gets no transaction and no tenant setting at all, and there is no `@SpringBootTest` in this repository that would have caught a self-injected proxy being wrong. `OutboxRelayRlsIT` (11 tests) pins the database behaviour against a real PostgreSQL 16; `OutboxRelayTest` and `OutboxWorkTest` (8 each) pin that work is claimed across a bean boundary and that a failed entry stays queued rather than being marked done. Background jobs could not enumerate tenants from `org_organizations` — it is in the strict tenant list — so `V1_015` adds `plat_tenant_directory` (ids only, no row level security, kept in sync by a trigger). `V1_016` then splits the outbox policy into one policy per command, because `V1_015`'s widened read combined with a strict write left a platform-wide row readable but never publishable, which would have republished it on every sweep forever. |
+| Integration / outbound | Delivered end to end: an event published to the outbox is drained per tenant, fanned out to subscribed endpoints, signed, delivered over an SSRF-guarded transport, and retried with backoff. Three caveats are open and stated rather than buried. **(1)** The address pinning that closes the DNS rebinding gap is argued from the code — no test in this repository opens a real socket. **(2)** A tenant data-key rotation invalidates endpoint secrets written under the previous key; `dek_id` records which key was used, but nothing re-encrypts yet. **(3)** Both background jobs walk every tenant on a fixed interval, which is the wrong shape at a few thousand organizations: most sweeps run one empty query per organization with no queued work. The replacement is a work-claim table listing only organizations with outstanding work; it is not built. Two further items were open and are now closed. `OutboxRelay` used to read `plat_outbox` with no tenant context set — that table carries forced row level security and the migrations explicitly strip `BYPASSRLS` from `hatis_app`, so the query returned an empty list rather than an error, and **no event was ever published** while every metric looked healthy. It is now two beans: `OutboxRelay` walks `plat_tenant_directory`, binds each tenant in turn, and runs a separate unbound pass for platform-wide rows, while `OutboxWork` does the reading and publishing inside that tenant's transaction. The split is the fix, not tidying — Spring applies `@TenantTransactional` through a proxy, so a bean calling its own transactional method gets no transaction and no tenant setting at all, and the only Spring context in this repository wires the datasource and JPA rather than the relay beans, so it would not have caught a self-injected proxy being wrong. `OutboxRelayRlsIT` (11 tests) pins the database behaviour against a real PostgreSQL 16; `OutboxRelayTest` and `OutboxWorkTest` (8 each) pin that work is claimed across a bean boundary and that a failed entry stays queued rather than being marked done. Background jobs could not enumerate tenants from `org_organizations` — it is in the strict tenant list — so `V1_015` adds `plat_tenant_directory` (ids only, no row level security, kept in sync by a trigger). `V1_016` then splits the outbox policy into one policy per command, because `V1_015`'s widened read combined with a strict write left a platform-wide row readable but never publishable, which would have republished it on every sweep forever. |
 | Backups | Documented (`17`); no restore drill has been executed, so the RPO/RTO figures are targets, not results. |
 | OWASP dependency-check | Runs only when an `NVD_API_KEY` secret exists; without one it skips with a notice, because dependency-check cannot fetch the NVD cache inside a job timeout unkeyed. Trivy is the gate that actually fails a build. See §19.6. |
 
@@ -90,12 +90,12 @@ customer content into a third-party model without a per-tenant control.
 
 Stated plainly, because a claim of "done" without a named check is worth nothing.
 
-**Verified in GitHub Actions, run `35507775488` on commit `a2f1caf` — all eight jobs
+**Verified in GitHub Actions, run `35509303723` on commit `3430eaf` — all eight jobs
 green:**
 
 - **Backend (Java 21 / Spring Boot): success.** All 17 modules compile and
-  `mvn verify` completes. The run reports **264 tests, 0 failures, 0 errors,
-  0 skipped** across 24 classes: `StorageKeysTest` 7, `AssetTest` 16,
+  `mvn verify` completes. The run reports **266 tests, 0 failures, 0 errors,
+  0 skipped** across 25 classes: `StorageKeysTest` 7, `AssetTest` 16,
   `ContentBodyValidatorTest` 12, `RichTextSanitizerTest` 16, `ReleaseTest` 9,
   `HexagonalArchitectureTest` 7, `GitHubSignatureVerifierTest` 19,
   `GitHubPushEventTest` 9, `InboundWebhookServiceTest` 11, `IntegrationServiceTest` 9,
@@ -103,8 +103,8 @@ green:**
   `WebhookUrlValidatorTest` 42, `WebhookSignerTest` 10, `OutboxRelayTest` 8,
   `OutboxWorkTest` 8, `OutboxEntryPersistenceIT` 10, `WebhookEndpointPersistenceIT` 9,
   `TenantIsolationIT` 9, `OutboxRelayRlsIT` 11 and
-  `JsonbDataSourceConfigurationIT` 5, `EntitySchemaValidationIT` 3, `JsonbEntityRoundTripIT` 5,
-  the last seven against a real
+  `JsonbDataSourceConfigurationIT` 5, `EntitySchemaValidationIT` 3, `JsonbEntityRoundTripIT` 5, `ApplicationWiringIT` 2,
+  the last eight against a real
   PostgreSQL 16 under Testcontainers. Those per-class numbers are published as a
   commit comment on every run, so the count is checkable rather than asserted.
 - **Build and scan container image: success.** The image builds from
@@ -239,6 +239,23 @@ invisible in exactly that way, because the fault was in the driver and not in an
 mapping. Each of those tests asks PostgreSQL what it stored rather than asking Hibernate for
 the value back, because a double-encoded write round-trips to Java perfectly and is still
 useless: the column holds a jsonb *string* containing JSON, and `column->>'x'` returns null.
+
+**And no Spring context had ever been started at all.** Every test in the repository
+constructed its subject directly, which is right for a unit test and wrong for the question
+of whether the application boots. So `application.yml` had never been loaded by Spring:
+nothing had bound `spring.datasource.hikari` onto a real `HikariConfig`, and nothing had run
+the `ddl-auto: validate` the application performs on every start. Two tests came close
+without being it — one runs Boot's `Binder` by hand, the other builds a validating
+`SessionFactory` by hand — and neither shows the application invoking them.
+`ApplicationWiringIT` imports the datasource and JPA autoconfiguration, points
+`spring.config.location` at the shipped file, and asserts what arrives: a
+`HikariDataSource` carrying `stringtype=unspecified`, pool name `hatis-pool`, maximum pool
+size 20, `hibernate.hbm2ddl.auto=validate`, and every entity in the metamodel. The last two
+are what stop it passing for the wrong reason: a configuration that silently dropped the
+setting, or an entity scan that reached one module, would otherwise look identical to
+success. It is a narrow context by design — the full application would also want Redis, an
+object storage provider, a secret store and a token issuer, and failing because Redis was
+absent would say nothing about the wiring.
 
 **A green secret scan was also not evidence of an absent finding.** Every commit runs the
 pipeline twice, on the `push` event and the `pull_request` event, and gitleaks scans only
