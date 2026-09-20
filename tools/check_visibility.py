@@ -40,9 +40,61 @@ KEYWORDS = {'if', 'for', 'while', 'switch', 'catch', 'return', 'new', 'else', 'd
             'try', 'throw', 'case', 'instanceof', 'package', 'import', 'super', 'this'}
 
 
+def _blank(fragment):
+    """Whitespace of the same length, keeping newlines so line numbers survive."""
+    return ''.join(c if c == '\n' else ' ' for c in fragment)
+
+
 def strip_comments(text):
-    text = re.sub(r'/\*.*?\*/', lambda m: re.sub(r'\S', ' ', m.group(0)), text, flags=re.DOTALL)
-    return re.sub(r'//.*', '', text)
+    """Blank out comments AND string/char literals, in a single pass.
+
+    Both have to go, and they have to go together: stripping comments first turns the
+    ``//`` inside ``"https://host"`` into a comment and eats the rest of the line, while
+    stripping literals first turns the apostrophe in ``// don't`` into the start of a char
+    literal. A single scanner is the only ordering that is right for both.
+
+    Literals are blanked rather than removed because a ``@DisplayName("AuditLog.metadata
+    is stored...")`` reads to the ACCESS pattern below exactly like a field access, and
+    reported one. Text inside a string is never an access, so blanking it can only remove
+    false positives - there is no code it could hide.
+    """
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        if text.startswith('/*', i):
+            end = text.find('*/', i + 2)
+            end = n if end < 0 else end + 2
+            out.append(_blank(text[i:end]))
+            i = end
+        elif text.startswith('//', i):
+            end = text.find('\n', i)
+            end = n if end < 0 else end
+            out.append(' ' * (end - i))
+            i = end
+        elif text.startswith('"""', i):
+            end = text.find('"""', i + 3)
+            end = n if end < 0 else end + 3
+            out.append(_blank(text[i:end]))
+            i = end
+        elif text[i] in '"\'':
+            quote = text[i]
+            j = i + 1
+            while j < n:
+                if text[j] == '\\':
+                    j += 2
+                    continue
+                if text[j] == quote:
+                    j += 1
+                    break
+                if text[j] == '\n':
+                    break
+                j += 1
+            out.append(_blank(text[i:j]))
+            i = j
+        else:
+            out.append(text[i])
+            i += 1
+    return ''.join(out)
 
 
 def analyse(path):
