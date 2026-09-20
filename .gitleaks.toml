@@ -1,0 +1,28 @@
+# gitleaks configuration.
+#
+# This extends the default ruleset and disables nothing. It exists for one
+# documented false positive; every other rule runs exactly as shipped.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "PEM armor markers that TokenService strips, not an embedded key"
+
+# TokenService.loadSigningKey reads the signing key out of the secret store and
+# removes its PEM armor before Base64-decoding the body, so the source
+# necessarily contains the literal header strings. gitleaks' private-key rule
+# matches those markers wherever they appear, including in code that parses a
+# key rather than containing one - which is what it flagged, at the
+# .replace("-----BEGIN PRIVATE KEY-----", "") call.
+#
+# Scoped twice over, to this one file and to the armor-stripping calls, so a real
+# key committed anywhere else still fails the scan, and so does a key literal
+# pasted into this file somewhere other than those four replace() arguments.
+#
+# Both conditions are stated even though either alone would suppress the finding,
+# because the intent is that both must hold. If a future gitleaks version ORs
+# allowlist conditions instead of ANDing them, each one is still specific enough
+# on its own to be safe.
+paths = ['''backend/hatis-identity/src/main/java/com/hatis/platform/identity/application/TokenService\.java''']
+regexes = ['''\.replace\("-----BEGIN(?: RSA)? PRIVATE KEY-----", ""\)''']

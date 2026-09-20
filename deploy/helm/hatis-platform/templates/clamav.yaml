@@ -1,0 +1,94 @@
+{{/*
+ClamAV daemon.
+
+Runs beside the worker so uploaded bytes are scanned inside the cluster and never
+sent to an external scanning service - which matters for customers whose uploads
+are confidential by contract.
+
+The scanner is a hard dependency of the asset upload path: an asset is not
+deliverable until a verdict exists, so if this deployment is absent every upload
+is quarantined rather than served. That is the intended failure mode.
+*/}}
+{{- if and .Values.worker.enabled (eq (toString .Values.assets.scanner.mode) "clamav") }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hatis.fullname" . }}-clamav
+  labels:
+    {{- include "hatis.labels" . | nindent 4 }}
+    app.kubernetes.io/component: malware-scanner
+spec:
+  replicas: {{ .Values.assets.scanner.clamav.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "hatis.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: malware-scanner
+  template:
+    metadata:
+      labels:
+        {{- include "hatis.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: malware-scanner
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: clamav
+          image: {{ .Values.assets.scanner.clamav.image | default "clamav/clamav:1.3" | quote }}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: clamav
+              containerPort: 3310
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: 250m, memory: 1Gi }
+            limits:   { cpu: "1",  memory: 2Gi }
+          readinessProbe:
+            # The image ships clamdcheck; a TCP probe is used because the daemon
+            # takes minutes to load signatures after a cold start.
+            tcpSocket: { port: clamav }
+            initialDelaySeconds: 90
+            periodSeconds: 15
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket: { port: clamav }
+            initialDelaySeconds: 180
+            periodSeconds: 30
+            failureThreshold: 6
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: signatures
+              mountPath: /var/lib/clamav
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: signatures
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.assets.scanner.clamav.host | default "clamav" | quote }}
+  labels:
+    {{- include "hatis.labels" . | nindent 4 }}
+    app.kubernetes.io/component: malware-scanner
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "hatis.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: malware-scanner
+  ports:
+    - name: clamav
+      port: {{ .Values.assets.scanner.clamav.port | default 3310 }}
+      targetPort: clamav
+      protocol: TCP
+{{- end }}

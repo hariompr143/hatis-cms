@@ -1,0 +1,53 @@
+name: Release
+
+# Production release pipeline. Requires an explicit approval on the
+# `production` environment before the deploy job starts.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+      image_tag:
+        description: Image tag to deploy (defaults to the git SHA)
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy via Helm
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: tag
+        run: echo "tag=${{ inputs.image_tag || github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure kubeconfig
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG_DATA }}
+        run: |
+          install -d ~/.kube
+          printf '%s' "$KUBE_CONFIG" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: helm upgrade --install
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm upgrade --install hatis deploy/helm/hatis-platform \
+            --namespace hatis-system --create-namespace \
+            --set platform.image.repository=ghcr.io/${{ github.repository }}/hatis-platform \
+            --set platform.image.tag=${{ steps.tag.outputs.tag }} \
+            --values deploy/helm/values/${{ inputs.environment }}.yaml \
+            --wait --timeout 10m
+
+      - name: Verify rollout
+        run: kubectl -n hatis-system rollout status deployment/hatis-platform --timeout=300s

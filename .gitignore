@@ -1,0 +1,64 @@
+# --- Build output -----------------------------------------------------------
+target/
+build/
+dist/
+# Anchored on purpose. An unanchored `out/` matches a directory named out at any
+# depth, which included backend/**/port/out/ - that silently kept five outbound
+# port interfaces (MalwareScanner, DeploymentProvider, DnsProvider,
+# CertificateProvider, MembershipLookup) out of the repository while the build
+# failed for want of them.
+/out/
+.next/
+.turbo/
+node_modules/
+*.class
+*.jar
+*.war
+
+# --- Local runtime state ----------------------------------------------------
+.data/
+.volumes/
+*.log
+logs/
+hs_err_pid*
+replay_pid*
+
+# --- Secrets and local configuration ---------------------------------------
+# Never commit credentials. Only *.example templates are allowed.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+*-service-account.json
+kubeconfig
+**/secrets/*.yaml
+!**/secrets/*.example.yaml
+
+# --- Tooling caches --------------------------------------------------------
+.idea/
+*.iml
+.vscode/
+.m2/
+.gradle/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+.DS_Store
+
+# --- Source is never ignored -----------------------------------------------
+# Backstop for the mistake above: whatever the build-output patterns say, Java
+# sources under a src/ tree are tracked. These negations must stay below the
+# patterns they undo, and the directory negations must come first - git will not
+# re-include a file whose parent directory is excluded.
+!**/src/
+!**/src/**/
+!**/src/**/*.java
+
+# --- Generated reports -----------------------------------------------------
+dependency-reduced-pom.xml
+.flattened-pom.xml
+semgrep-report.*
+trivy-report.*

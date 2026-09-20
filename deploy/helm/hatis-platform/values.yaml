@@ -1,0 +1,139 @@
+# Default values for the HATIS platform chart.
+#
+# Nothing secret belongs in this file or in any values file committed to Git.
+# Credentials are supplied from an existing Kubernetes Secret referenced by
+# `existingSecret`, which the installer creates from the customer's secret store.
+
+nameOverride: ""
+fullnameOverride: ""
+
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+platform:
+  # -- One image runs both roles; HATIS_ROLE selects behaviour.
+  image:
+    repository: ghcr.io/hariompr143/hatis-cms/hatis-platform
+    tag: ""            # defaults to .Chart.AppVersion
+    pullPolicy: IfNotPresent
+  replicaCount: 2
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits:   { cpu: "2",  memory: 2Gi }
+  service:
+    type: ClusterIP
+    port: 8080
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  podDisruptionBudget:
+    minAvailable: 1
+
+worker:
+  enabled: true
+  replicaCount: 2
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: "1",  memory: 1Gi }
+
+# -- Name of an existing Secret holding database, redis and signing-key material.
+# Required keys: db-url, db-username, db-password, redis-url, token-signing-key.
+existingSecret: hatis-platform-secrets
+
+database:
+  # When true the chart does not create a database; the platform connects to the
+  # credentials in `existingSecret`. This is the mode for customer-owned and
+  # managed-database installs.
+  external: true
+
+redis:
+  external: true
+
+events:
+  transport: outbox          # outbox | kafka
+  kafkaBootstrap: ""
+
+secretsProvider: environment # environment | vault | aws | kubernetes
+
+# -- Installation profile. `development` is the only profile that permits
+# development-only adapters, such as disabled malware scanning. The chart refuses
+# to render such an adapter under any other profile.
+profile: production
+
+storage:
+  provider: s3           # s3 (AWS S3 or any S3-compatible service)
+  s3:
+    bucket: ""
+    region: us-east-1
+    # Set for MinIO, Ceph RGW, Cloudflare R2 or any other S3-compatible endpoint.
+    endpointOverride: ""
+    pathStyleAccess: false
+
+assets:
+  scanner:
+    # clamav scans inline before an asset becomes deliverable. `none` accepts
+    # uploads unscanned and is refused unless profile=development.
+    mode: clamav
+    clamav:
+      image: "clamav/clamav:1.3"
+      replicaCount: 1
+      host: clamav
+      port: 3310
+      timeoutMillis: 60000
+
+ingress:
+  enabled: true
+  className: nginx
+  host: api.hatis.example
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "30m"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  tls:
+    enabled: true
+    secretName: hatis-platform-tls
+
+certificate:
+  # Issues a cert-manager Certificate for the ingress host when enabled.
+  enabled: false
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+
+networkPolicy:
+  # Default-deny ingress with an explicit allow for the ingress controller.
+  enabled: true
+  ingressNamespaceSelector:
+    kubernetes.io/metadata.name: ingress-nginx
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+serviceAccount:
+  create: true
+  name: ""
+  # The deployer role is only needed when the platform schedules tenant workloads
+  # in this cluster. Customer-managed clusters can disable it.
+  createDeployerRole: true
+
+topologySpread:
+  enabled: true
+  maxSkew: 1
+  topologyKey: topology.kubernetes.io/zone
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

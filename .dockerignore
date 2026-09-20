@@ -1,0 +1,26 @@
+# Keeps the Docker build context small and, more importantly, keeps secrets and
+# local state out of the image.
+.git
+.github
+.gitignore
+**/target
+**/node_modules
+**/.next
+**/dist
+.data
+.volumes
+*.log
+.env
+.env.*
+!**/.env.example
+*.pem
+*.key
+*.p12
+*.jks
+kubeconfig
+docs
+frontend
+terraform
+deploy/helm
+.idea
+.vscode

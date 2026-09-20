@@ -1,0 +1,418 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.hatis.platform</groupId>
+  <artifactId>hatis-parent</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <name>HATIS Platform :: Parent</name>
+  <description>
+    HATIS-CMS enterprise business experience, CMS, analytics and application platform.
+    Modular monolith with strict domain boundaries, designed to be split into
+    independently deployable services when an operational reason exists.
+  </description>
+
+  <modules>
+    <module>hatis-shared</module>
+    <module>hatis-audit</module>
+    <module>hatis-identity</module>
+    <module>hatis-organization</module>
+    <module>hatis-authorization</module>
+    <module>hatis-cms</module>
+    <module>hatis-assets</module>
+    <module>hatis-workflow</module>
+    <module>hatis-infrastructure</module>
+    <module>hatis-domains</module>
+    <module>hatis-deployment</module>
+    <module>hatis-billing</module>
+    <module>hatis-analytics</module>
+    <module>hatis-integration</module>
+    <module>hatis-notification</module>
+    <module>hatis-api</module>
+  </modules>
+
+  <properties>
+    <java.version>21</java.version>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+    <!--
+      Spring Boot 3.5.14, plus the security overrides declared in dependencyManagement
+      below. Boot 3.3.5 shipped 61 fixable CRITICAL/HIGH findings through its managed
+      transitives; 3.5.14 alone brought that to 39, and the pinned overrides are what
+      close the rest. Every version used is one the image scan cites as the fix for a
+      named finding, so each is known to exist in Maven Central - this sandbox cannot
+      reach any Maven mirror, and guessing a coordinate that does not exist was the main
+      risk this avoids.
+    -->
+    <spring-boot.version>3.5.14</spring-boot.version>
+    <!-- CVE-2025-41249, CVE-2026-41850, CVE-2026-41842, CVE-2026-41845 -->
+    <spring-framework.version>6.2.19</spring-framework.version>
+    <!-- CVE-2026-22732 (critical), CVE-2025-22228 -->
+    <spring-security.version>6.5.9</spring-security.version>
+    <!-- CVE-2026-41695 -->
+    <spring-data.version>3.5.12</spring-data.version>
+    <!-- CVE-2026-41731 -->
+    <spring-kafka.version>3.3.16</spring-kafka.version>
+    <!-- CVE-2025-24813 (critical), CVE-2026-41293 (critical), CVE-2026-41284,
+         CVE-2026-65182 (critical), CVE-2026-65905, CVE-2026-68525.
+         The advisory for CVE-2026-65182 names 10.1.58, but Tomcat never published that
+         version to Maven Central - its metadata jumps 10.1.57 -> 10.1.59 - so 10.1.60 is
+         used instead, being the newest 10.1.x and past the required fix. Tomcat 11 is
+         deliberately not used: it needs Servlet 6.1 and therefore Spring Boot 4. -->
+    <tomcat.version>10.1.60</tomcat.version>
+    <!-- CVE-2026-75595 (critical), CVE-2026-42583, CVE-2026-42579, CVE-2026-42587 -->
+    <netty.version>4.1.137.Final</netty.version>
+    <!-- GHSA-r7wm-3cxj-wff9, CVE-2026-54512 -->
+    <jackson-bom.version>2.21.4</jackson-bom.version>
+    <!-- CVE-2026-40983, CVE-2026-40984 -->
+    <micrometer.version>1.15.12</micrometer.version>
+    <!-- CVE-2026-35554 -->
+    <kafka.version>3.9.2</kafka.version>
+    <!-- CVE-2025-12183, pulled in through kafka-clients -->
+    <lz4-java.version>1.8.1</lz4-java.version>
+    <!-- CVE-2025-49146, CVE-2026-42198, CVE-2026-54291 -->
+    <postgresql.version>42.7.12</postgresql.version>
+
+    <awssdk.version>2.28.16</awssdk.version>
+    <testcontainers.version>1.20.3</testcontainers.version>
+    <springdoc.version>2.8.9</springdoc.version>
+    <jsoup.version>1.18.1</jsoup.version>
+    <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
+    <maven-surefire-plugin.version>3.2.5</maven-surefire-plugin.version>
+    <maven-failsafe-plugin.version>3.2.5</maven-failsafe-plugin.version>
+    <maven-enforcer-plugin.version>3.5.0</maven-enforcer-plugin.version>
+    <jacoco.version>0.8.12</jacoco.version>
+    <archunit.version>1.3.0</archunit.version>
+    <nimbus-jose-jwt.version>9.40</nimbus-jose-jwt.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <!--
+        Security overrides, and they must stay ABOVE the Spring Boot BOM.
+
+        Spring Boot is consumed here as an imported BOM, not as this POM's parent. An
+        imported BOM resolves its own properties in its own context, so redefining
+        <tomcat.version> or <netty.version> in this file has no effect on it - that is
+        the difference from inheriting spring-boot-starter-parent, where those
+        properties do override. Maven resolves dependencyManagement first-declaration-wins,
+        so importing these BOMs and pinning these artifacts ahead of the Boot import is
+        what actually moves the versions.
+
+        The image scan proved the point: with the properties alone, tomcat-embed-core
+        stayed at 10.1.54 and netty at 4.1.132.Final - exactly what Boot 3.5.14 manages -
+        despite <tomcat.version>10.1.58</tomcat.version> being present.
+      -->
+      <dependency>
+        <groupId>org.springframework</groupId>
+        <artifactId>spring-framework-bom</artifactId>
+        <version>${spring-framework.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.springframework.security</groupId>
+        <artifactId>spring-security-bom</artifactId>
+        <version>${spring-security.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <!--
+        spring-data-commons is pinned as an artifact, not via spring-data-bom: the Spring
+        Data BOM is versioned by release train (2025.0.x) while the module itself is 3.5.x,
+        so spring-data-bom:3.5.12 does not exist and the import fails to resolve.
+      -->
+      <dependency>
+        <groupId>org.springframework.data</groupId>
+        <artifactId>spring-data-commons</artifactId>
+        <version>${spring-data.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.netty</groupId>
+        <artifactId>netty-bom</artifactId>
+        <version>${netty.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.jackson</groupId>
+        <artifactId>jackson-bom</artifactId>
+        <version>${jackson-bom.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>io.micrometer</groupId>
+        <artifactId>micrometer-bom</artifactId>
+        <version>${micrometer.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <!-- Tomcat, Kafka and the JDBC driver have no BOM, so they are pinned directly. -->
+      <dependency>
+        <groupId>org.apache.tomcat.embed</groupId>
+        <artifactId>tomcat-embed-core</artifactId>
+        <version>${tomcat.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.tomcat.embed</groupId>
+        <artifactId>tomcat-embed-el</artifactId>
+        <version>${tomcat.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.tomcat.embed</groupId>
+        <artifactId>tomcat-embed-websocket</artifactId>
+        <version>${tomcat.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.springframework.kafka</groupId>
+        <artifactId>spring-kafka</artifactId>
+        <version>${spring-kafka.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.kafka</groupId>
+        <artifactId>kafka-clients</artifactId>
+        <version>${kafka.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.lz4</groupId>
+        <artifactId>lz4-java</artifactId>
+        <version>${lz4-java.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.postgresql</groupId>
+        <artifactId>postgresql</artifactId>
+        <version>${postgresql.version}</version>
+      </dependency>
+
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-dependencies</artifactId>
+        <version>${spring-boot.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>software.amazon.awssdk</groupId>
+        <artifactId>bom</artifactId>
+        <version>${awssdk.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.testcontainers</groupId>
+        <artifactId>testcontainers-bom</artifactId>
+        <version>${testcontainers.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.springdoc</groupId>
+        <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+        <version>${springdoc.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.jsoup</groupId>
+        <artifactId>jsoup</artifactId>
+        <version>${jsoup.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.nimbusds</groupId>
+        <artifactId>nimbus-jose-jwt</artifactId>
+        <version>${nimbus-jose-jwt.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.tngtech.archunit</groupId>
+        <artifactId>archunit-junit5</artifactId>
+        <version>${archunit.version}</version>
+      </dependency>
+
+      <!-- Internal modules -->
+      <dependency>
+        <groupId>com.hatis.platform</groupId>
+        <artifactId>hatis-shared</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.hatis.platform</groupId>
+        <artifactId>hatis-audit</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.hatis.platform</groupId>
+        <artifactId>hatis-identity</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.hatis.platform</groupId>
+        <artifactId>hatis-organization</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.hatis.platform</groupId>
+        <artifactId>hatis-authorization</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.hatis.platform</groupId>
+        <artifactId>hatis-cms</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.hatis.platform</groupId>
+        <artifactId>hatis-assets</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.hatis.platform</groupId>
+        <artifactId>hatis-workflow</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.hatis.platform</groupId>
+        <artifactId>hatis-infrastructure</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.hatis.platform</groupId>
+        <artifactId>hatis-domains</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.hatis.platform</groupId>
+        <artifactId>hatis-deployment</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.hatis.platform</groupId>
+        <artifactId>hatis-billing</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.hatis.platform</groupId>
+        <artifactId>hatis-analytics</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.hatis.platform</groupId>
+        <artifactId>hatis-integration</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.hatis.platform</groupId>
+        <artifactId>hatis-notification</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <!-- Shared by every module: structured logging, metrics, tracing annotations. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-logging</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.mockito</groupId>
+      <artifactId>mockito-junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.springframework.boot</groupId>
+          <artifactId>spring-boot-maven-plugin</artifactId>
+          <version>${spring-boot.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-failsafe-plugin</artifactId>
+          <version>${maven-failsafe-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.jacoco</groupId>
+          <artifactId>jacoco-maven-plugin</artifactId>
+          <version>${jacoco.version}</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>${maven-compiler-plugin.version}</version>
+        <configuration>
+          <release>${maven.compiler.release}</release>
+          <!-- Spring needs -parameters to resolve handler argument names. -->
+          <parameters>true</parameters>
+          <compilerArgs>
+            <arg>-Xlint:all,-serial,-processing</arg>
+          </compilerArgs>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>${maven-surefire-plugin.version}</version>
+        <configuration>
+          <includes>
+            <include>**/*Test.java</include>
+            <include>**/*Tests.java</include>
+          </includes>
+          <excludes>
+            <exclude>**/*IT.java</exclude>
+          </excludes>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <version>${maven-enforcer-plugin.version}</version>
+        <executions>
+          <execution>
+            <id>enforce-build-environment</id>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <requireJavaVersion>
+                  <version>[21,)</version>
+                </requireJavaVersion>
+                <requireMavenVersion>
+                  <version>[3.9,)</version>
+                </requireMavenVersion>
+                <banDuplicatePomDependencyVersions/>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
