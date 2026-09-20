@@ -46,7 +46,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/`; image builds and Trivy exits clean at CRITICAL,HIGH (§19.6) |
 | Architecture boundaries enforced at build time | Done | `HexagonalArchitectureTest` |
 | Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`; lint, typecheck, tests and `next build` green in CI (§19.6) |
-| CI green end to end | Done | All eight jobs green in run `35457225013`. See §19.6. |
+| CI green end to end | Done | All eight jobs green in run `35507775488`. See §19.6. |
 | GitHub integration: inbound webhooks and their management | Done | `hatis-integration`; HMAC-verified push receiver plus create/connect/rotate/disconnect, 48 tests |
 | Outbound webhook security core | Done | `hatis-integration`; `WebhookUrlValidator` (SSRF target checks) and `WebhookSigner` (delivery HMAC), 50 tests. Delivery itself is not delivered — see the outbound row below. |
 | Outbound webhook persistence | Done | `WebhookEndpoint` and `WebhookDelivery` map `int_webhook_endpoints` and `int_webhook_deliveries`, including the platform's first PostgreSQL `text[]` column; `V1_014` adds the bookkeeping columns deliveries need. `WebhookEndpointPersistenceIT` round-trips both against PostgreSQL 16 under forced RLS, 9 tests. |
@@ -90,12 +90,12 @@ customer content into a third-party model without a per-tenant control.
 
 Stated plainly, because a claim of "done" without a named check is worth nothing.
 
-**Verified in GitHub Actions, run `35457225013` on commit `c2039d5` — all eight jobs
+**Verified in GitHub Actions, run `35507775488` on commit `a2f1caf` — all eight jobs
 green:**
 
 - **Backend (Java 21 / Spring Boot): success.** All 17 modules compile and
-  `mvn verify` completes. The run reports **259 tests, 0 failures, 0 errors,
-  0 skipped** across 23 classes: `StorageKeysTest` 7, `AssetTest` 16,
+  `mvn verify` completes. The run reports **264 tests, 0 failures, 0 errors,
+  0 skipped** across 24 classes: `StorageKeysTest` 7, `AssetTest` 16,
   `ContentBodyValidatorTest` 12, `RichTextSanitizerTest` 16, `ReleaseTest` 9,
   `HexagonalArchitectureTest` 7, `GitHubSignatureVerifierTest` 19,
   `GitHubPushEventTest` 9, `InboundWebhookServiceTest` 11, `IntegrationServiceTest` 9,
@@ -103,8 +103,8 @@ green:**
   `WebhookUrlValidatorTest` 42, `WebhookSignerTest` 10, `OutboxRelayTest` 8,
   `OutboxWorkTest` 8, `OutboxEntryPersistenceIT` 10, `WebhookEndpointPersistenceIT` 9,
   `TenantIsolationIT` 9, `OutboxRelayRlsIT` 11 and
-  `JsonbDataSourceConfigurationIT` 5, `EntitySchemaValidationIT` 3,
-  the last six against a real
+  `JsonbDataSourceConfigurationIT` 5, `EntitySchemaValidationIT` 3, `JsonbEntityRoundTripIT` 5,
+  the last seven against a real
   PostgreSQL 16 under Testcontainers. Those per-class numbers are published as a
   commit comment on every run, so the count is checkable rather than asserted.
 - **Build and scan container image: success.** The image builds from
@@ -230,6 +230,15 @@ string stored in `plat_outbox.payload` is never the string the publisher seriali
 what the webhook signer signs, and it is what any future payload hash or cache key would have
 to be computed over; comparing it against the publisher's output will never match.
 `theServerNormalisesTheDocumentBeforeStoringIt` pins it instead of leaving it as a surprise.
+
+All six of those mappings have now been written to a database. `OutboxEntry.payload` is
+covered by `OutboxEntryPersistenceIT`; `JsonbEntityRoundTripIT` covers the other five, which
+until then had never had a row flushed through Hibernate at all. Sharing a mapping shape with
+a covered entity is not the same as being covered by its test — the original defect was
+invisible in exactly that way, because the fault was in the driver and not in any one
+mapping. Each of those tests asks PostgreSQL what it stored rather than asking Hibernate for
+the value back, because a double-encoded write round-trips to Java perfectly and is still
+useless: the column holds a jsonb *string* containing JSON, and `column->>'x'` returns null.
 
 **A green secret scan was also not evidence of an absent finding.** Every commit runs the
 pipeline twice, on the `push` event and the `pull_request` event, and gitleaks scans only
