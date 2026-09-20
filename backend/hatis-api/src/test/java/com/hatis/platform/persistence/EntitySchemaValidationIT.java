@@ -1,9 +1,5 @@
 package com.hatis.platform.persistence;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.output.MigrateResult;
 import org.hibernate.SessionFactory;
@@ -16,6 +12,7 @@ import org.postgresql.ds.PGSimpleDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import schema.probe.DeliberatelyWrongMapping;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -24,7 +21,6 @@ import java.sql.Connection;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -186,6 +182,12 @@ class EntitySchemaValidationIT {
                 + (end < 0 ? message : message.substring(0, end)).trim();
     }
 
+    /**
+     * {@link DeliberatelyWrongMapping} deliberately lives outside {@code com.hatis.platform}
+     * rather than nested here. A mapping that is known to be wrong cannot sit inside the
+     * package the boot test scans, or {@code ddl-auto: validate} would reject it at start-up
+     * and fail the very thing that test exists to prove.
+     */
     @Test
     @DisplayName("validation catches a mapping that disagrees with the schema")
     void validationCatchesAMappingThatDisagreesWithTheSchema() {
@@ -194,22 +196,6 @@ class EntitySchemaValidationIT {
                         + "exactly like one that checked everything and found no problem")
                 .isInstanceOf(SchemaManagementException.class)
                 .hasMessageContaining("column_that_does_not_exist");
-    }
-
-    /**
-     * Mapped onto a real table, with one column that is not in it. Exists only so the test
-     * above can show the validation is capable of failing.
-     */
-    @Entity
-    @Table(name = "plat_outbox")
-    static class DeliberatelyWrongMapping {
-
-        @Id
-        @Column(name = "id")
-        UUID id;
-
-        @Column(name = "column_that_does_not_exist")
-        String notAColumn;
     }
 
     private static SessionFactory sessionFactoryWith(
