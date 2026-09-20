@@ -46,7 +46,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/`; image builds and Trivy exits clean at CRITICAL,HIGH (§19.6) |
 | Architecture boundaries enforced at build time | Done | `HexagonalArchitectureTest` |
 | Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`; lint, typecheck, tests and `next build` green in CI (§19.6) |
-| CI green end to end | Done | All eight jobs green in run `35438496624`. See §19.6. |
+| CI green end to end | Done | All eight jobs green in run `35457225013`. See §19.6. |
 | GitHub integration: inbound webhooks and their management | Done | `hatis-integration`; HMAC-verified push receiver plus create/connect/rotate/disconnect, 48 tests |
 | Outbound webhook security core | Done | `hatis-integration`; `WebhookUrlValidator` (SSRF target checks) and `WebhookSigner` (delivery HMAC), 50 tests. Delivery itself is not delivered — see the outbound row below. |
 | Outbound webhook persistence | Done | `WebhookEndpoint` and `WebhookDelivery` map `int_webhook_endpoints` and `int_webhook_deliveries`, including the platform's first PostgreSQL `text[]` column; `V1_014` adds the bookkeeping columns deliveries need. `WebhookEndpointPersistenceIT` round-trips both against PostgreSQL 16 under forced RLS, 9 tests. |
@@ -90,12 +90,12 @@ customer content into a third-party model without a per-tenant control.
 
 Stated plainly, because a claim of "done" without a named check is worth nothing.
 
-**Verified in GitHub Actions, run `35438496624` on commit `0af2f34` — all eight jobs
+**Verified in GitHub Actions, run `35457225013` on commit `c2039d5` — all eight jobs
 green:**
 
 - **Backend (Java 21 / Spring Boot): success.** All 17 modules compile and
-  `mvn verify` completes. The run reports **256 tests, 0 failures, 0 errors,
-  0 skipped** across 22 classes: `StorageKeysTest` 7, `AssetTest` 16,
+  `mvn verify` completes. The run reports **259 tests, 0 failures, 0 errors,
+  0 skipped** across 23 classes: `StorageKeysTest` 7, `AssetTest` 16,
   `ContentBodyValidatorTest` 12, `RichTextSanitizerTest` 16, `ReleaseTest` 9,
   `HexagonalArchitectureTest` 7, `GitHubSignatureVerifierTest` 19,
   `GitHubPushEventTest` 9, `InboundWebhookServiceTest` 11, `IntegrationServiceTest` 9,
@@ -103,7 +103,8 @@ green:**
   `WebhookUrlValidatorTest` 42, `WebhookSignerTest` 10, `OutboxRelayTest` 8,
   `OutboxWorkTest` 8, `OutboxEntryPersistenceIT` 10, `WebhookEndpointPersistenceIT` 9,
   `TenantIsolationIT` 9, `OutboxRelayRlsIT` 11 and
-  `JsonbDataSourceConfigurationIT` 5, the last five against a real
+  `JsonbDataSourceConfigurationIT` 5, `EntitySchemaValidationIT` 3,
+  the last six against a real
   PostgreSQL 16 under Testcontainers. Those per-class numbers are published as a
   commit comment on every run, so the count is checkable rather than asserted.
 - **Build and scan container image: success.** The image builds from
@@ -172,6 +173,33 @@ expected key would satisfy the first assertion on its own. The `PropertySourcesP
 is load-bearing rather than decoration — without it the binder tries to convert the literal
 placeholder text into an `int` and fails, which reads as a broken configuration rather than
 as a missing step in the test.
+
+**Twenty-five of the twenty-eight entity mappings had never met a database.** The sources
+declare 28 `@Entity` classes and, before `EntitySchemaValidationIT`, exactly three had ever
+been registered with a Hibernate session — the three an integration test happened to touch.
+That mattered because `application.yml` sets `spring.jpa.hibernate.ddl-auto: validate`, so the
+first deploy compares all 28 mappings against the migrated schema and refuses to start if any
+of them disagrees. Nothing in the repository had ever run that comparison.
+
+It found four, and the first attempt at fixing them was wrong in an instructive way. Setting
+`columnDefinition = "char(64)"` on a `char(64)` column did not help; Hibernate reported
+`found [bpchar (Types#CHAR)], but expecting [char(64) (Types#VARCHAR)]`. It takes
+`columnDefinition` as the expected type *name* verbatim, so the name has to be the one the
+server actually reports — `bpchar`, not `char(64)` — while the JDBC type code still comes
+from the Java field type. The four jsonb columns already passed validation, which is what
+made the mechanism legible: they declare `columnDefinition = "jsonb"` and the name matches.
+So the fix names the type as the server reports it — `bpchar` for the two SHA-256 digest
+columns, `citext` for `email`, `slug`, `hostname` and `apex_domain`. The schema is not the
+side that is wrong: `citext` is what makes those unique indexes case-insensitive, and losing
+it would let two tenants hold the same hostname differing only in case.
+
+Two details of the test are worth keeping because both were gotchas. Validation is one
+`SessionFactory` per entity, not one for all of them, because Hibernate stops at the first
+disagreement it reaches — a single build would have surfaced one finding per cycle, and
+`record_hash` and `hostname` stayed hidden behind columns in their own entities until the
+sweep was per-entity. And the list has to be printed under a marker the build report
+collects, because Maven's one-line summary truncates an assertion message and the failsafe
+XML that holds the whole of it is an artifact that cannot be read from here.
 
 Writing that test produced two findings that have nothing to do with `jsonb` and are worth
 carrying forward.
