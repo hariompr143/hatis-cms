@@ -249,7 +249,9 @@ anl_dashboards             (id, organization_id, project_id, name, layout jsonb,
 anl_reports                (id, organization_id, dashboard_id, name, format, schedule,
                             recipients text[], last_run_at, next_run_at, status, created_at)
 anl_alerts                 (id, organization_id, metric_key, condition, threshold,
-                            window, notify_channels text[], status, last_triggered_at, created_at)
+                            window_minutes, notify_channels text[],
+                            notify_user_ids uuid[], status, last_triggered_at,
+                            created_at, updated_at, version)
 ```
 
 ### Integration (`int_`) and notification (`ntf_`)

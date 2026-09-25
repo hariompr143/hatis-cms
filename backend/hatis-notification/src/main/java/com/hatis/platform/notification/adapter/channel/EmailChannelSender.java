@@ -1,6 +1,7 @@
 package com.hatis.platform.notification.adapter.channel;
 
 import com.hatis.platform.notification.domain.Notification;
+import com.hatis.platform.notification.port.out.ChannelSender;
 import com.hatis.platform.notification.port.out.EmailTransport;
 import com.hatis.platform.notification.port.out.RecipientDirectory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;

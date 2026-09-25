@@ -80,7 +80,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for check in check_imports check_visibility check_module_deps check_entity_schema check_permissions; do
+          for check in check_imports check_project_imports check_visibility check_module_deps check_entity_schema check_permissions; do
             echo "::group::${check}"
             python3 "../tools/${check}.py"
             echo "::endgroup::"
