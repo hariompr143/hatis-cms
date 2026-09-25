@@ -46,14 +46,14 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/`; image builds and Trivy exits clean at CRITICAL,HIGH (§19.6) |
 | Architecture boundaries enforced at build time | Done | `HexagonalArchitectureTest` |
 | Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`; lint, typecheck, tests and `next build` green in CI (§19.6) |
-| CI green end to end | Done | All eight jobs green in run `35509303723`. See §19.6. |
+| CI green end to end | Done | All eight jobs green in run `36180858909` on commit `b4a01f6`: 404 tests across 40 classes. The run before it, `35509303723` on `3430eaf`, was green at 266 tests; the 138 in between are the workflow, notification, analytics and CMS review tests added since. See §19.6. |
 | GitHub integration: inbound webhooks and their management | Done | `hatis-integration`; HMAC-verified push receiver plus create/connect/rotate/disconnect, 48 tests |
 | Outbound webhook security core | Done | `hatis-integration`; `WebhookUrlValidator` (SSRF target checks) and `WebhookSigner` (delivery HMAC), 50 tests. Delivery itself is not delivered — see the outbound row below. |
 | Outbound webhook persistence | Done | `WebhookEndpoint` and `WebhookDelivery` map `int_webhook_endpoints` and `int_webhook_deliveries`, including the platform's first PostgreSQL `text[]` column; `V1_014` adds the bookkeeping columns deliveries need. `WebhookEndpointPersistenceIT` round-trips both against PostgreSQL 16 under forced RLS, 9 tests. |
 | Outbound endpoint management API | Done | `WebhookEndpointService` + `/v1/integrations/webhooks`: register, list, read, update, pause, resume, rotate, delete. The secret is envelope-encrypted under the tenant key and returned in plaintext exactly once. `WebhookEndpointServiceTest`, 11 tests. |
 | Outbound webhook delivery, end to end | Done | `OutboxRelay` now publishes to every `EventSink`; `WebhookEventSink` opens delivery records inside the relay's transaction and `WebhookDeliveryWorker` performs the sends outside it. `WebhookEventSinkTest` 5 tests. |
 | Outbound webhook dispatcher | Done | `WebhookDispatcher` fans an event out to subscribed endpoints, signs it, records the attempt and schedules exponential-backoff retries; `WebhookDeliveryLog` holds the transactional bookkeeping so no transaction spans an HTTP call. `WebhookDispatcherTest`, 11 tests. Not yet wired to anything — see the outbound row below. |
-| Workflow engine | Done | Definitions, instances, tasks and append-only history over `V1_008`; the seeded `editorial_review` template ships in the migration and is parsed by the service that runs it. A transition needs both `workflow:transition` and the assignee the definition names, a move completes the acting task and cancels the rest at that state, and history is written through JDBC because `V1_013` revokes update and delete on it. `WorkflowServiceTest`, `WorkflowDefinitionSpecTest`, `WorkflowDefinitionParserTest`, 48 tests; the catalogue rows are migration-owned and stay unmapped, which is stated in the ArchUnit allowlist rather than left as an exception nobody can read. |
+| Workflow engine | Done | Definitions, instances, tasks and append-only history over `V1_008`; the seeded `editorial_review` template ships in the migration and is parsed by the service that runs it. A transition needs both `workflow:transition` and the assignee the definition names, a move completes the acting task and cancels the rest at that state, and history is written through JDBC because `V1_013` revokes update and delete on it. `WorkflowServiceTest`, `WorkflowDefinitionSpecTest`, `WorkflowDefinitionParserTest`, 48 tests. `WorkflowDefinition` is the platform's first entity in `domain` rather than in the persistence adapter, because a definition is read by the parser and written by nobody; the architecture rule that requires tenant-scoped entities to extend the base type exempts it by name, with the reason — a catalogue row whose `organization_id` is null is not a tenant-owned aggregate — written next to the exemption. |
 | Notification | Done | The row is the queue, the delivery record and the inbox: written `PENDING` before anything is sent, so a failed delivery is a row a customer can see rather than a line in a log. `IN_APP` is a no-op, `WEBHOOK` reuses the outbound delivery path, and `EMAIL` exists only where `hatis.notification.email.enabled` is true — where it is false the channel is absent rather than fake, and the notification is recorded as failed. No route takes a user id: the inbox is the caller's, and somebody else's notification reads as not found rather than forbidden. `NotificationTest`, `NotificationServiceTest`, `EmailChannelSenderTest`, 25 tests. |
 | Analytics | Done | Metrics in, bucketed storage, series and alert evaluation out. Aggregation happens in SQL with the aggregate function and `date_trunc` unit chosen from closed enums, so no request can put text into the statement; windows are bounded to 90 days because the difference between reading an index and aggregating a table is one query parameter. Alerts evaluate on a schedule per tenant and deliver through notification — one message per recipient per channel, with `WEBHOOK` covered by the published event rather than a second copy. `anl_data_sources` and `anl_datasets` are described by the schema and mapped by nothing, because the platform has no connectors: a connector that returned invented rows would be a placeholder, and platform-event rollups are the same work as the rollup job and belong to Phase 2. `AlertWorkTest`, `AnalyticsServiceTest`, `MetricStoreTest`, `AlertTest`, `DashboardTest` and three domain tests, 57 tests. |
 | CMS review flow | Done | Submitting an item starts the seeded editorial definition against it, approving and rejecting are decided by the engine before the item moves, and a rejected item is reworked before it can be reviewed again. Building it exposed a defect that made every content endpoint answer 403 to every caller: the module checked `content:read`, `content:publish` and friends where the catalogue defines `cms:content:read`, `cms:content:publish` and so on, and because authorization matches the code against grants, a code that is not in the catalogue is a closed door rather than a weaker check. `V1_019` adds the codes that were genuinely absent — the same problem existed in the deployment module with `application:*` and `release:*` — and `tools/check_permissions.py` now fails CI for the third instance. `ContentReviewTest`, 8 tests. |
@@ -65,6 +65,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | --- | --- |
 | Integration / outbound — open caveats | Delivered end to end: an event published to the outbox is drained per tenant, fanned out to subscribed endpoints, signed, delivered over an SSRF-guarded transport, and retried with backoff. Three caveats are open and stated rather than buried. **(1)** The address pinning that closes the DNS rebinding gap is argued from the code — no test in this repository opens a real socket. **(2)** A tenant data-key rotation invalidates endpoint secrets written under the previous key; `dek_id` records which key was used, but nothing re-encrypts yet. **(3)** Both background jobs walk every tenant on a fixed interval, which is the wrong shape at a few thousand organizations: most sweeps run one empty query per organization with no queued work. The replacement is a work-claim table listing only organizations with outstanding work; it is not built. Two further items were open and are now closed. `OutboxRelay` used to read `plat_outbox` with no tenant context set — that table carries forced row level security and the migrations explicitly strip `BYPASSRLS` from `hatis_app`, so the query returned an empty list rather than an error, and **no event was ever published** while every metric looked healthy. It is now two beans: `OutboxRelay` walks `plat_tenant_directory`, binds each tenant in turn, and runs a separate unbound pass for platform-wide rows, while `OutboxWork` does the reading and publishing inside that tenant's transaction. The split is the fix, not tidying — Spring applies `@TenantTransactional` through a proxy, so a bean calling its own transactional method gets no transaction and no tenant setting at all, and the only Spring context in this repository wires the datasource and JPA rather than the relay beans, so it would not have caught a self-injected proxy being wrong. `OutboxRelayRlsIT` (11 tests) pins the database behaviour against a real PostgreSQL 16; `OutboxRelayTest` and `OutboxWorkTest` (8 each) pin that work is claimed across a bean boundary and that a failed entry stays queued rather than being marked done. Background jobs could not enumerate tenants from `org_organizations` — it is in the strict tenant list — so `V1_015` adds `plat_tenant_directory` (ids only, no row level security, kept in sync by a trigger). `V1_016` then splits the outbox policy into one policy per command, because `V1_015`'s widened read combined with a strict write left a platform-wide row readable but never publishable, which would have republished it on every sweep forever. |
 | Backups | Documented (`17`); no restore drill has been executed, so the RPO/RTO figures are targets, not results. |
+| Content review in the console | The API supports submit, approve and reject (`/v1/content/items/{id}/submit`, `/approve`, `/reject`) and the workflow's tasks are readable through `/v1/workflows/tasks`, but the console's content page lists items with a status filter and offers no review actions, so a reviewer works through the API today. |
 | OWASP dependency-check | Runs only when an `NVD_API_KEY` secret exists; without one it skips with a notice, because dependency-check cannot fetch the NVD cache inside a job timeout unkeyed. Trivy is the gate that actually fails a build. See §19.6. |
 
 ## 19.3 Phase 2 — Enterprise
@@ -91,8 +92,40 @@ customer content into a third-party model without a per-tenant control.
 
 Stated plainly, because a claim of "done" without a named check is worth nothing.
 
-**Verified in GitHub Actions, run `35509303723` on commit `3430eaf` — all eight jobs
-green:**
+**Verified in GitHub Actions, run `36180858909` on commit `b4a01f6` — every job that
+applies to the change green:**
+
+- **Backend (Java 21 / Spring Boot): success.** All 17 modules compile and `mvn verify`
+  completes: **404 tests, 0 failures, 0 errors, 0 skipped** across 40 classes, up from
+  266 across 25 in the previous green run. The additions are the workflow engine's three
+  test classes (48), notification's three (25), analytics' eight (57 — the module had
+  none), and `ContentReviewTest` (8), which together are the phase-1 areas that were
+  schema-only before. The static source checks now run before Maven and caught nothing
+  this time, having been added because `EmailChannelSender` and, earlier, two modules'
+  permission codes got past the JDK-only import check and the catalogue.
+- **Build and scan container image: success**, with the Trivy scan exiting clean at
+  CRITICAL and HIGH.
+- **Dependency scan, secret scan and SAST (Semgrep): success.** Frontend and IaC
+  validation are skipped rather than failed: the change touches `backend/`, `tools/` and
+  the workflow file, and the change filter says so.
+
+Getting there took six pushes, and what each one was for is worth recording, because
+five of the six were defects that only a compiler could find:
+
+1. `be84749` — `EmailChannelSender` implemented `ChannelSender` without importing it.
+2. `35d6914` — the fix, plus `tools/check_project_imports.py`, which reproduces that
+   error locally.
+3. `4a7d70e` — a test compared an `AtomicInteger` to an `int`.
+4. `81e4efd` — `WorkflowService`'s `orElseThrow` lambda captured a local that is
+   reassigned later in the method.
+5. `e3110c3` — starting a definition whose initial state is terminal completed the
+   instance but published only `workflow.instance.started`.
+6. `2702cb5`, `2290c47`, `b4a01f6` — the CMS authorizing item operations at organization
+   scope, a conditional expression javac could not infer, and two stubs that mixed a raw
+   value with a Mockito matcher.
+
+**Verified earlier in GitHub Actions, run `35509303723` on commit `3430eaf` — all eight
+jobs green:**
 
 - **Backend (Java 21 / Spring Boot): success.** All 17 modules compile and
   `mvn verify` completes. The run reports **266 tests, 0 failures, 0 errors,

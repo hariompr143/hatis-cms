@@ -81,20 +81,30 @@ build.
 | Event | `<context>.<entity>.<verb>` |
 | Error code | `snake_case`, stable, machine-readable |
 
-The table prefix is what makes a schema readable at 69 tables: `dep_` is deployment,
+The table prefix is what makes a schema readable at 70 tables: `dep_` is deployment,
 `dom_` is domains, and nothing has to be guessed.
 
 ## 18.5 Migrations
 
 `backend/hatis-api/src/main/resources/db/migration/`, one file per concern,
-`V1_000` … `V1_013`. Every migration is additive within a release; a destructive
-change is a two-release expand-and-contract.
+`V1_000` … `V1_019`. Every migration is additive within a release; a destructive
+change is a two-release expand-and-contract. A migration that has run anywhere is
+never edited — a checksum change on an applied migration is a failure, not a fix —
+which is why later corrections (the missing permission codes in `V1_017` and
+`V1_019`) arrive as new files rather than as edits to `V1_003`.
 
 `tools/check_entity_schema.py` parses `@Entity`/`@Table`/`@Column` out of the
 sources and compares them with the `CREATE TABLE` statements, so a mapping that
 would fail Hibernate's startup validation is caught without a JVM. It currently
-covers 25 entities against 69 tables with no gaps. It is not a type checker and does
-not claim to be — it answers one question exactly.
+covers 35 entities against 70 tables with no gaps. It is not a type checker and does
+not claim to be — it answers one question exactly. Four sibling checks answer one
+question each as well: `check_imports.py` (a JDK type used without its import),
+`check_project_imports.py` (the same for a type this repository declares),
+`check_visibility.py` (a type used outside the package that may see it),
+`check_module_deps.py` (an import no module declares, or one whose module is not a
+dependency) and `check_permissions.py` (a permission code the catalogue does not
+define, which denies everybody rather than weakening the check). All five run in the
+backend CI job before Maven.
 
 ## 18.6 Where things go, for the common cases
 
