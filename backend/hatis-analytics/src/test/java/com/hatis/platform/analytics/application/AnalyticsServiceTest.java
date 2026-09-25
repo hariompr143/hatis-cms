@@ -299,10 +299,12 @@ class AnalyticsServiceTest {
     @Test
     @DisplayName("listing alerts filters by status only when one is named")
     void alertListingFiltersByStatus() {
-        when(alerts.findByOrganizationId(organizationId, any(Pageable.class))).thenReturn(Page.empty());
+        // Every argument is a matcher: Mockito refuses to mix a raw value with matchers.
+        when(alerts.findByOrganizationId(eq(organizationId), any(Pageable.class)))
+                .thenReturn(Page.empty());
         assertThat(service.listAlerts(null, 0, 25).items()).isEmpty();
 
-        when(alerts.findByOrganizationIdAndStatus(organizationId, Alert.Status.PAUSED,
+        when(alerts.findByOrganizationIdAndStatus(eq(organizationId), eq(Alert.Status.PAUSED),
                 any(Pageable.class))).thenReturn(Page.empty());
         assertThat(service.listAlerts("paused", 0, 25).items()).isEmpty();
 
