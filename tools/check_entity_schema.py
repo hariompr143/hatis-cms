@@ -28,10 +28,23 @@ INHERITED = {
 
 
 def parse_migrations():
-    """table name -> set of column names."""
+    """table name -> set of column names.
+
+    Reads both `create table` and the `alter table ... add column` form. The
+    latter is how columns arrive once a table has shipped - V1_014 added the
+    bookkeeping columns to int_webhook_deliveries that way, and an entity
+    mapping one of them would otherwise be reported as a mapping error (or, with
+    the inherited-field list, quietly accepted without ever being checked).
+    """
     tables = defaultdict(set)
     for path in sorted(MIGRATIONS.glob('*.sql')):
         sql = path.read_text()
+        for match in re.finditer(
+                r'alter table ([a-z_]+)\s*(.*?);', sql, re.DOTALL):
+            table, body = match.group(1), match.group(2)
+            for column in re.finditer(
+                    r'add column (?:if not exists )?([a-z_][a-z0-9_]*)', body):
+                tables[table].add(column.group(1))
         for match in re.finditer(r'create table (?:if not exists )?([a-z_]+)\s*\((.*?)\n\);',
                                  sql, re.DOTALL):
             name, body = match.group(1), match.group(2)
@@ -118,7 +131,7 @@ def parse_entities():
             fields = []
             for column_match in re.finditer(
                     r'@Column\s*\((?P<args>[^)]*)\)(?P<between>.*?)'
-                    r'(?:private|protected)\s+[\w.<>\[\]]+\s+(?P<field>\w+)\s*;',
+                    r'(?:private|protected)\s+[\w.<>\[\]]+\s+(?P<field>\w+)\s*(?:=[^;]*)?;',
                     body, re.DOTALL):
                 args = column_match.group('args')
                 name_match = re.search(r'name\s*=\s*"([^"]+)"', args)

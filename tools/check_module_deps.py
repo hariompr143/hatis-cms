@@ -59,12 +59,20 @@ def main():
     graph = {d.name: [a for a in hatis_dependencies(d) if a in names] for d in dirs}
     reachable = {m: closure(m, graph) for m in graph}
 
-    # Every type the backend declares, keyed by fully qualified name.
+    # Every type the backend declares, keyed by fully qualified name. Production types are
+    # importable wherever the module is, so they are recorded once; test types are recorded
+    # separately and are only importable from the module's own tests, which is what javac
+    # allows - a test fixture is not on another module's test classpath.
     declared = {}
+    test_declared = {}
     for d in dirs:
         for path in (d / 'src' / 'main' / 'java').rglob('*.java'):
             package = path.parent.relative_to(d / 'src' / 'main' / 'java').as_posix().replace('/', '.')
             declared[f'{package}.{path.stem}'] = d.name
+        test_root = d / 'src' / 'test' / 'java'
+        for path in test_root.rglob('*.java'):
+            package = path.parent.relative_to(test_root).as_posix().replace('/', '.')
+            test_declared[f'{package}.{path.stem}'] = d.name
 
     unresolved = []
     missing_dep = []
@@ -79,9 +87,20 @@ def main():
                 parts = target.split('.')
                 owner = declared.get(target)
                 # Nested type: walk back to the outermost declared type.
-                while owner is None and len(parts) > 3:
-                    parts = parts[:-1]
-                    owner = declared.get('.'.join(parts))
+                candidate = list(parts)
+                while owner is None and len(candidate) > 3:
+                    candidate = candidate[:-1]
+                    owner = declared.get('.'.join(candidate))
+                if owner is None:
+                    test_owner = test_declared.get(target)
+                    if test_owner == d.name:
+                        # A test importing its own module's test fixture: ordinary, and not
+                        # a production dependency.
+                        continue
+                    if test_owner is not None:
+                        missing_dep.append(f'{d.name}/{path.relative_to(d)}:{line_number}: '
+                                           f'imports {target}, a test type from {test_owner}')
+                        continue
                 if owner is None:
                     unresolved.append(f'{d.name}/{path.relative_to(d)}:{line_number}: '
                                       f'imports {target}, which no module declares')

@@ -126,11 +126,23 @@ class HexagonalArchitectureTest {
     @Test
     @DisplayName("tenant-scoped entities extend the tenant-scoped base type")
     void tenantScopedEntitiesUseTheBaseType() {
-        // Platform-wide aggregates: they deliberately carry no organization, so they
-        // cannot extend the tenant-scoped base type.
+        // Platform-wide aggregates, plus catalogue rows with a nullable organization.
+        //
+        // The first group deliberately carries no organization at all. The second —
+        // Permission and Role on auth_permissions/auth_roles, and WorkflowDefinition on
+        // wf_definitions — is a table that holds both kinds of row: a template with
+        // organization_id null that every tenant reads, and tenant-owned rows for the
+        // tenants that have them. TenantScopedEntity refuses to exist without an
+        // organization, and it is right to: it exists to stop a tenant-owned aggregate
+        // forgetting its tenant. A catalogue row is a different thing, which is why the
+        // exemption is by name and why each name here has a nullable organization_id in
+        // the migration that creates it. V1_013 completes the argument on the database
+        // side: it widens read policies to include the null-organization rows and revokes
+        // insert, update and delete from hatis_app, so these rows are maintained by
+        // migrations and cannot be created by a request.
         String platformWideEntities =
                 ".*[.$](User|RefreshToken|MfaEnrolment|AuditLog|Operation|OutboxEntry"
-                        + "|IdempotencyRecord|Permission|Role)";
+                        + "|IdempotencyRecord|Permission|Role|WorkflowDefinition)";
 
         ArchRule rule = classes().that().areAnnotatedWith(jakarta.persistence.Entity.class)
                 // haveNameNotMatching rather than haveSimpleNameNotIn: the latter has

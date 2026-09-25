@@ -23,6 +23,19 @@
       <artifactId>hatis-audit</artifactId>
     </dependency>
     <dependency>
+      <groupId>com.hatis.platform</groupId>
+      <artifactId>hatis-authorization</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-mail</artifactId>
+    </dependency>
+    <!-- Provides io.swagger.v3.oas.annotations for the REST adapter. -->
+    <dependency>
+      <groupId>org.springdoc</groupId>
+      <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+    </dependency>
+    <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>

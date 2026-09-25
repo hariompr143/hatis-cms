@@ -5,6 +5,7 @@ import com.hatis.platform.authorization.domain.ScopeType;
 import com.hatis.platform.shared.audit.AuditRecord;
 import com.hatis.platform.shared.audit.AuditRecorder;
 import com.hatis.platform.shared.error.PlatformExceptions;
+import com.hatis.platform.shared.tenant.TenantContext;
 import com.hatis.platform.shared.tenant.TenantContextHolder;
 import com.hatis.platform.shared.tenant.TenantTransactional;
 import io.micrometer.core.instrument.Counter;
@@ -151,13 +152,35 @@ public class AuthorizationService {
     /** Roles the principal holds at organization scope; used for coarse UI gating. */
     @TenantTransactional(readOnly = true)
     public List<String> organizationRoles() {
-        var context = TenantContextHolder.require();
+        TenantContext context = TenantContextHolder.require();
+        return roleCodesAt(context, ScopeType.ORGANIZATION, context.requireOrganizationId());
+    }
+
+    /**
+     * Role codes the current principal holds at a scope, or at any scope above it.
+     *
+     * <p>This is the "who are you here" half of authorization, as opposed to the "may you do
+     * this" half {@link #isAllowed} answers. A workflow transition names the role it expects
+     * ({@code EDITOR}, {@code ORG_ADMIN}) rather than a permission, so deciding whether a
+     * caller may approve needs their role codes, not only a boolean.
+     *
+     * <p>Bindings that are expired, denied or scoped elsewhere are excluded exactly as they
+     * are for a permission decision: a role the principal cannot exercise must not satisfy a
+     * workflow step either. That is one rule with one implementation — this method — rather
+     * than a rule each caller re-implements against the bindings.
+     */
+    @TenantTransactional(readOnly = true)
+    public List<String> rolesAt(ScopeType scopeType, UUID scopeId) {
+        return roleCodesAt(TenantContextHolder.require(), scopeType, scopeId);
+    }
+
+    private List<String> roleCodesAt(TenantContext context, ScopeType scopeType, UUID scopeId) {
         Instant now = Instant.now();
         return bindings.findByOrganizationIdAndPrincipalId(context.requireOrganizationId(), context.principalId())
                 .stream()
-                .filter(b -> b.getScopeType() == ScopeType.ORGANIZATION)
-                .filter(b -> b.isActive(now))
                 .filter(b -> b.getEffect() == AuthorizationEntities.RoleBinding.Effect.ALLOW)
+                .filter(b -> b.isActive(now))
+                .filter(b -> covers(b, scopeType, scopeId))
                 .map(b -> roles.findById(b.getRoleId()).map(AuthorizationEntities.Role::getCode).orElse(null))
                 .filter(java.util.Objects::nonNull)
                 .distinct()

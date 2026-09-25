@@ -26,6 +26,7 @@ public class PlatformProperties {
     private final Uploads uploads = new Uploads();
     private final Storage storage = new Storage();
     private final Secrets secrets = new Secrets();
+    private final Notification notification = new Notification();
 
     public String getRole() {
         return role;
@@ -57,6 +58,114 @@ public class PlatformProperties {
 
     public Secrets secrets() {
         return secrets;
+    }
+
+    public Notification notification() {
+        return notification;
+    }
+
+    /**
+     * Notification delivery.
+     *
+     * <p>Typed here rather than read with {@code @Value} in the adapter so that the
+     * conditional that decides whether an email sender exists at all
+     * ({@code hatis.notification.email.enabled}) and the settings it then uses are declared in
+     * one place. A property that is half-advertised is how a deployment ends up with an email
+     * channel that is configured but never constructed.
+     */
+    public static class Notification {
+
+        private final Email email = new Email();
+
+        public Email email() {
+            return email;
+        }
+
+        public static class Email {
+
+            /**
+             * Off by default. An installation that has not configured a mail server must not
+             * pretend to send mail: with this false there is no {@code EMAIL} channel sender,
+             * and a notification raised on that channel is recorded as failed rather than
+             * delivered to nobody.
+             */
+            private boolean enabled = false;
+
+            private String host = "localhost";
+            private int port = 587;
+            private String username = "";
+
+            /** Secret-store path holding the SMTP password. Never the password itself. */
+            private String passwordSecret = "";
+
+            private String from = "no-reply@hatis.example";
+            private boolean startTls = true;
+            private Duration timeout = Duration.ofSeconds(5);
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+
+            public String getHost() {
+                return host;
+            }
+
+            public void setHost(String host) {
+                this.host = host;
+            }
+
+            public int getPort() {
+                return port;
+            }
+
+            public void setPort(int port) {
+                this.port = port;
+            }
+
+            public String getUsername() {
+                return username;
+            }
+
+            public void setUsername(String username) {
+                this.username = username;
+            }
+
+            public String getPasswordSecret() {
+                return passwordSecret;
+            }
+
+            public void setPasswordSecret(String passwordSecret) {
+                this.passwordSecret = passwordSecret;
+            }
+
+            public String getFrom() {
+                return from;
+            }
+
+            public void setFrom(String from) {
+                this.from = from;
+            }
+
+            public boolean isStartTls() {
+                return startTls;
+            }
+
+            public void setStartTls(boolean startTls) {
+                this.startTls = startTls;
+            }
+
+            public Duration getTimeout() {
+                return timeout;
+            }
+
+            public void setTimeout(Duration timeout) {
+                this.timeout = timeout;
+            }
+        }
     }
 
     public static class Events {
