@@ -16,6 +16,7 @@ import com.hatis.platform.shared.quota.QuotaKey;
 import com.hatis.platform.shared.quota.QuotaService;
 import com.hatis.platform.shared.tenant.TenantContextHolder;
 import com.hatis.platform.shared.tenant.TenantTransactional;
+import com.hatis.platform.workflow.application.WorkflowService;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -38,6 +39,28 @@ import java.util.UUID;
 @Service
 public class ContentService {
 
+    /**
+     * The catalogue's codes for this module's capabilities.
+     *
+     * <p>They are constants rather than literals because a check against a code the catalogue
+     * does not define denies everybody: {@code AuthorizationService} matches the code against
+     * what a role was granted, so a typo is not a weaker check, it is a permanently closed
+     * door. The names come from {@code V1_003} and are spelled the way the rest of the
+     * platform spells them ({@code cms:content:publish}, not {@code content:publish}).
+     */
+    public static final String READ_PERMISSION = "cms:content:read";
+    public static final String WRITE_PERMISSION = "cms:content:write";
+    public static final String SUBMIT_PERMISSION = "cms:content:submit";
+    public static final String APPROVE_PERMISSION = "cms:content:approve";
+    public static final String PUBLISH_PERMISSION = "cms:content:publish";
+    public static final String TYPE_WRITE_PERMISSION = "cms:type:write";
+
+    /** What a workflow instance is started against when an item goes to review. */
+    public static final String REVIEW_SUBJECT_TYPE = "content_item";
+
+    /** The state a rejection leaves the seeded editorial flow in, until the author reworks. */
+    private static final String REJECTED_STATE = "rejected";
+
     private final ContentRepositories.ContentTypeRepository types;
     private final ContentRepositories.ContentItemRepository items;
     private final ContentRepositories.ContentVersionRepository versions;
@@ -45,6 +68,7 @@ public class ContentService {
     private final QuotaService quotas;
     private final EventPublisher events;
     private final ObjectMapper mapper;
+    private final WorkflowService workflows;
 
     public ContentService(ContentRepositories.ContentTypeRepository types,
                           ContentRepositories.ContentItemRepository items,
@@ -52,7 +76,8 @@ public class ContentService {
                           AuthorizationService authorization,
                           QuotaService quotas,
                           EventPublisher events,
-                          ObjectMapper mapper) {
+                          ObjectMapper mapper,
+                          WorkflowService workflows) {
         this.types = types;
         this.items = items;
         this.versions = versions;
@@ -60,6 +85,7 @@ public class ContentService {
         this.quotas = quotas;
         this.events = events;
         this.mapper = mapper;
+        this.workflows = workflows;
     }
 
     // ---------------------------------------------------------------- types
@@ -67,13 +93,13 @@ public class ContentService {
     @TenantTransactional(readOnly = true)
     public List<ContentType> listTypes(UUID projectId) {
         UUID organizationId = requireTenant(ScopeType.PROJECT, projectId,
-                "content_type:read");
+                READ_PERMISSION);
         return types.findByOrganizationIdAndProjectId(organizationId, projectId);
     }
 
     @TenantTransactional(readOnly = true)
     public ContentType type(UUID typeId) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, "content_type:read");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, READ_PERMISSION);
         return types.findByIdAndOrganizationId(typeId, organizationId)
                 .orElseThrow(() -> new PlatformExceptions.NotFound("Content type", typeId));
     }
@@ -82,7 +108,7 @@ public class ContentService {
     public ContentType createType(UUID projectId, String name, String slug, String description,
                                   String schema, String titleField) {
         UUID organizationId = requireTenant(ScopeType.PROJECT, projectId,
-                "content_type:write");
+                TYPE_WRITE_PERMISSION);
         if (types.existsByOrganizationIdAndProjectIdAndSlug(organizationId, projectId, slug)) {
             throw new PlatformExceptions.AlreadyExists("A content type with slug '" + slug + "' already exists");
         }
@@ -99,7 +125,7 @@ public class ContentService {
     /** Publishes a new schema version without touching existing content. */
     @TenantTransactional
     public ContentType reviseSchema(UUID typeId, String schema) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, "content_type:write");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, TYPE_WRITE_PERMISSION);
         ContentType type = types.findByIdAndOrganizationId(typeId, organizationId)
                 .orElseThrow(() -> new PlatformExceptions.NotFound("Content type", typeId));
         parseSchema(schema);
@@ -111,7 +137,7 @@ public class ContentService {
 
     @TenantTransactional(readOnly = true)
     public PageResponse<ContentSummary> list(UUID projectId, String status, int page, int size) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, projectId, "content:read");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, projectId, READ_PERMISSION);
         var pageable = com.hatis.platform.shared.api.PageResponse.pageable(page, size,
                 org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC,
                         "updatedAt"));
@@ -125,18 +151,16 @@ public class ContentService {
 
     @TenantTransactional(readOnly = true)
     public ContentDetail get(UUID itemId) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, "content:read");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, READ_PERMISSION);
         ContentItem item = requireItem(itemId, organizationId);
-        ContentVersion version = item.getCurrentVersionId() == null
-                ? null
-                : versions.findByIdAndOrganizationId(item.getCurrentVersionId(), organizationId).orElse(null);
+        ContentVersion version = currentVersion(item, organizationId);
         return toDetail(item, version);
     }
 
     @TenantTransactional
     public ContentDetail create(UUID projectId, UUID contentTypeId, String slug, String locale,
                                 JsonNode body, String changeNote) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, projectId, "content:write");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, projectId, WRITE_PERMISSION);
         quotas.check(organizationId, QuotaKey.CONTENT_ITEMS, 1);
 
         ContentType type = types.findByIdAndOrganizationId(contentTypeId, organizationId)
@@ -173,7 +197,7 @@ public class ContentService {
     /** Saves a new draft version. Never changes what the delivery API serves. */
     @TenantTransactional
     public ContentDetail update(UUID itemId, JsonNode body, String changeNote) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, "content:write");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, WRITE_PERMISSION);
         ContentItem item = requireItem(itemId, organizationId);
         ContentType type = types.findByIdAndOrganizationId(item.getContentTypeId(), organizationId)
                 .orElseThrow(() -> new PlatformExceptions.NotFound("Content type", item.getContentTypeId()));
@@ -188,9 +212,84 @@ public class ContentService {
         return toDetail(item, version);
     }
 
+    // --------------------------------------------------------------- review
+
+    /**
+     * Starts the editorial review of an item's current version.
+     *
+     * <p>The workflow engine owns the states and this method owns the item. Starting a review
+     * creates one instance for the item and immediately walks it along the definition's first
+     * transition, so "in review" means a reviewer has a task rather than that a row exists. A
+     * second submission while a review is running is refused by the engine — the thing that
+     * knows — rather than by a second status check here.
+     */
+    @TenantTransactional
+    public ContentDetail submitForReview(UUID itemId) {
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, SUBMIT_PERMISSION);
+        ContentItem item = requireItem(itemId, organizationId);
+
+        UUID instanceId = item.getWorkflowInstanceId();
+        if (instanceId == null) {
+            instanceId = workflows.start(new WorkflowService.StartCommand(item.getProjectId(),
+                            REVIEW_SUBJECT_TYPE, item.getId(), WorkflowService.DEFAULT_DEFINITION_KEY))
+                    .instance().id();
+        } else if (REJECTED_STATE.equals(workflows.instance(instanceId).instance().currentState())) {
+            // A rejection leaves the instance running: the seeded definition expects the author
+            // to rework it, and only then can it be submitted again.
+            workflows.transition(new WorkflowService.TransitionCommand(instanceId, "rework", null));
+        }
+
+        // The engine moves first and the item follows, the same way a decision does. A
+        // transition the definition does not allow is refused there, before the item's status
+        // has been changed to something the workflow disagrees with.
+        workflows.transition(new WorkflowService.TransitionCommand(instanceId, "submit", null));
+        item.submitForReview(instanceId);
+        items.save(item);
+
+        events.publish(PlatformEvent.of("cms.content.submitted", organizationId)
+                .resource("content_item", item.getId())
+                .data(Map.of("slug", item.getSlug(), "workflowInstanceId", instanceId.toString()))
+                .build());
+        return toDetail(item, currentVersion(item, organizationId));
+    }
+
+    /** Approves an item under review, moving the item and its workflow instance together. */
+    @TenantTransactional
+    public ContentDetail approve(UUID itemId, String comment) {
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, APPROVE_PERMISSION);
+        ContentItem item = requireItem(itemId, organizationId);
+        UUID instanceId = requireRunningReview(item);
+
+        workflows.transition(new WorkflowService.TransitionCommand(instanceId, "approve", comment));
+        item.approve();
+        items.save(item);
+
+        events.publish(PlatformEvent.of("cms.content.approved", organizationId)
+                .resource("content_item", item.getId())
+                .build());
+        return toDetail(item, currentVersion(item, organizationId));
+    }
+
+    /** Rejects an item under review. The item returns to draft; the review keeps its history. */
+    @TenantTransactional
+    public ContentDetail reject(UUID itemId, String comment) {
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, APPROVE_PERMISSION);
+        ContentItem item = requireItem(itemId, organizationId);
+        UUID instanceId = requireRunningReview(item);
+
+        workflows.transition(new WorkflowService.TransitionCommand(instanceId, "reject", comment));
+        item.reject();
+        items.save(item);
+
+        events.publish(PlatformEvent.of("cms.content.rejected", organizationId)
+                .resource("content_item", item.getId())
+                .build());
+        return toDetail(item, currentVersion(item, organizationId));
+    }
+
     @TenantTransactional
     public ContentDetail publish(UUID itemId) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, "content:publish");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, PUBLISH_PERMISSION);
         ContentItem item = requireItem(itemId, organizationId);
         item.publish();
         items.save(item);
@@ -204,7 +303,7 @@ public class ContentService {
 
     @TenantTransactional
     public ContentDetail unpublish(UUID itemId) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, "content:publish");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, PUBLISH_PERMISSION);
         ContentItem item = requireItem(itemId, organizationId);
         item.unpublish();
         items.save(item);
@@ -218,7 +317,7 @@ public class ContentService {
     /** Rolls the published pointer back to an earlier version without deleting history. */
     @TenantTransactional
     public ContentDetail rollback(UUID itemId, int versionNumber) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, "content:publish");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, PUBLISH_PERMISSION);
         ContentItem item = requireItem(itemId, organizationId);
         ContentVersion target = versions
                 .findByContentItemIdAndOrganizationIdOrderByVersionNumberDesc(item.getId(), organizationId)
@@ -237,7 +336,7 @@ public class ContentService {
 
     @TenantTransactional(readOnly = true)
     public List<VersionSummary> history(UUID itemId) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, "content:read");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, READ_PERMISSION);
         ContentItem item = requireItem(itemId, organizationId);
         return versions.findByContentItemIdAndOrganizationIdOrderByVersionNumberDesc(item.getId(), organizationId)
                 .stream()
@@ -249,7 +348,7 @@ public class ContentService {
     /** Soft delete: the row remains for export and audit until the retention job runs. */
     @TenantTransactional
     public void delete(UUID itemId) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, "content:write");
+        UUID organizationId = requireTenant(ScopeType.PROJECT, null, WRITE_PERMISSION);
         ContentItem item = requireItem(itemId, organizationId);
         item.delete();
         items.save(item);
@@ -294,6 +393,26 @@ public class ContentService {
         UUID organizationId = TenantContextHolder.require().requireOrganizationId();
         authorization.require(permission, scope, scopeId == null ? organizationId : scopeId);
         return organizationId;
+    }
+
+    /**
+     * The item's running review, or a refusal.
+     *
+     * <p>Checked before the workflow moves. A decision taken against an item that is not in
+     * review would otherwise move the workflow and then fail on the item; both would roll
+     * back, but the message a caller sees should name what is actually wrong.
+     */
+    private UUID requireRunningReview(ContentItem item) {
+        if (item.getStatus() != ContentItem.Status.IN_REVIEW || item.getWorkflowInstanceId() == null) {
+            throw new PlatformExceptions.StateConflict(
+                    "Content in state " + item.getStatus() + " has no review to decide");
+        }
+        return item.getWorkflowInstanceId();
+    }
+
+    private ContentVersion currentVersion(ContentItem item, UUID organizationId) {
+        return item.getCurrentVersionId() == null ? null
+                : versions.findByIdAndOrganizationId(item.getCurrentVersionId(), organizationId).orElse(null);
     }
 
     private ContentItem requireItem(UUID itemId, UUID organizationId) {
@@ -346,7 +465,8 @@ public class ContentService {
         }
         return new ContentDetail(item.getId(), item.getProjectId(), item.getContentTypeId(), item.getSlug(),
                 item.getLocale(), item.getStatus().name(), item.getCurrentVersionId(),
-                item.getPublishedVersionId(), version == null ? null : version.getVersionNumber(), body,
+                item.getPublishedVersionId(), item.getWorkflowInstanceId(),
+                version == null ? null : version.getVersionNumber(), body,
                 item.getPublishedAt(), item.getCreatedAt(), item.getUpdatedAt());
     }
 
@@ -357,6 +477,7 @@ public class ContentService {
 
     public record ContentDetail(UUID id, UUID projectId, UUID contentTypeId, String slug, String locale,
                                 String status, UUID currentVersionId, UUID publishedVersionId,
+                                UUID workflowInstanceId,
                                 Integer versionNumber, JsonNode body, java.time.Instant publishedAt,
                                 java.time.Instant createdAt, java.time.Instant updatedAt) {
     }

@@ -44,6 +44,7 @@ jobs:
           filters: |
             backend:
               - 'backend/**'
+              - 'tools/**'
               - '.github/workflows/ci.yml'
             frontend:
               - 'frontend/**'
@@ -70,6 +71,20 @@ jobs:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
+
+      # Source-level checks that would otherwise be discovered only after a full Maven
+      # cycle. They are stdlib-only Python and take seconds; check_permissions in particular
+      # catches a permission code that the catalogue does not define, which is invisible at
+      # runtime: the check simply denies everybody.
+      - name: Static source checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          for check in check_imports check_visibility check_module_deps check_entity_schema check_permissions; do
+            echo "::group::${check}"
+            python3 "../tools/${check}.py"
+            echo "::endgroup::"
+          done
 
       - name: Verify (enforce, compile, unit tests, integration tests)
         shell: bash

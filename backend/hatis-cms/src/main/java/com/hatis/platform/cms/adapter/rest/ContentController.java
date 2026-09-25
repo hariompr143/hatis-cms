@@ -97,6 +97,26 @@ public class ContentController {
         return content.update(itemId, request.body(), request.changeNote());
     }
 
+    @PostMapping("/items/{itemId}/submit")
+    @Operation(summary = "Submit content for editorial review")
+    public ContentService.ContentDetail submitForReview(@PathVariable UUID itemId) {
+        return content.submitForReview(itemId);
+    }
+
+    @PostMapping("/items/{itemId}/approve")
+    @Operation(summary = "Approve content that is in review")
+    public ContentService.ContentDetail approve(@PathVariable UUID itemId,
+                                                @Valid @RequestBody(required = false) ReviewDecisionRequest request) {
+        return content.approve(itemId, request == null ? null : request.comment());
+    }
+
+    @PostMapping("/items/{itemId}/reject")
+    @Operation(summary = "Reject content that is in review, returning it to draft")
+    public ContentService.ContentDetail reject(@PathVariable UUID itemId,
+                                               @Valid @RequestBody(required = false) ReviewDecisionRequest request) {
+        return content.reject(itemId, request == null ? null : request.comment());
+    }
+
     @PostMapping("/items/{itemId}/publish")
     @Operation(summary = "Publish the current version")
     public ContentService.ContentDetail publish(@PathVariable UUID itemId) {
@@ -153,6 +173,17 @@ public class ContentController {
     }
 
     public record UpdateContentRequest(@NotNull JsonNode body, @Size(max = 512) String changeNote) {
+    }
+
+    /**
+     * A reviewer's comment.
+     *
+     * <p>The body is optional because a decision without a note is ordinary, and the bound is the
+     * workflow task's column, which is {@code varchar(2000)}: a longer comment would be rejected
+     * by the database after the workflow moved, and the caller would see a driver error instead
+     * of being told what to shorten.
+     */
+    public record ReviewDecisionRequest(@Size(max = 2000) String comment) {
     }
 
     public record RollbackRequest(@NotNull Integer versionNumber) {
