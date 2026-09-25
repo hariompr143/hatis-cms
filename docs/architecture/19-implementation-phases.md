@@ -109,6 +109,10 @@ applies to the change green:**
   validation are skipped rather than failed: the change touches `backend/`, `tools/` and
   the workflow file, and the change filter says so.
 
+The commit that carries this paragraph — `d502c31`, documentation only — was green too
+(run `36181707782`), so the claim above is checkable at the commit that makes it rather
+than only at an earlier one.
+
 Getting there took six pushes, and what each one was for is worth recording, because
 five of the six were defects that only a compiler could find:
 
