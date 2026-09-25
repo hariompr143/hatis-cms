@@ -99,9 +99,11 @@ public class ContentService {
 
     @TenantTransactional(readOnly = true)
     public ContentType type(UUID typeId) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, READ_PERMISSION);
-        return types.findByIdAndOrganizationId(typeId, organizationId)
+        UUID organizationId = TenantContextHolder.require().requireOrganizationId();
+        ContentType type = types.findByIdAndOrganizationId(typeId, organizationId)
                 .orElseThrow(() -> new PlatformExceptions.NotFound("Content type", typeId));
+        authorization.require(READ_PERMISSION, ScopeType.PROJECT, type.getProjectId());
+        return type;
     }
 
     @TenantTransactional
@@ -125,9 +127,10 @@ public class ContentService {
     /** Publishes a new schema version without touching existing content. */
     @TenantTransactional
     public ContentType reviseSchema(UUID typeId, String schema) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, TYPE_WRITE_PERMISSION);
+        UUID organizationId = TenantContextHolder.require().requireOrganizationId();
         ContentType type = types.findByIdAndOrganizationId(typeId, organizationId)
                 .orElseThrow(() -> new PlatformExceptions.NotFound("Content type", typeId));
+        authorization.require(TYPE_WRITE_PERMISSION, ScopeType.PROJECT, type.getProjectId());
         parseSchema(schema);
         type.reviseSchema(schema);
         return types.save(type);
@@ -151,9 +154,8 @@ public class ContentService {
 
     @TenantTransactional(readOnly = true)
     public ContentDetail get(UUID itemId) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, READ_PERMISSION);
-        ContentItem item = requireItem(itemId, organizationId);
-        ContentVersion version = currentVersion(item, organizationId);
+        ContentItem item = requireItemFor(itemId, READ_PERMISSION);
+        ContentVersion version = currentVersion(item, item.getOrganizationId());
         return toDetail(item, version);
     }
 
@@ -197,8 +199,8 @@ public class ContentService {
     /** Saves a new draft version. Never changes what the delivery API serves. */
     @TenantTransactional
     public ContentDetail update(UUID itemId, JsonNode body, String changeNote) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, WRITE_PERMISSION);
-        ContentItem item = requireItem(itemId, organizationId);
+        ContentItem item = requireItemFor(itemId, WRITE_PERMISSION);
+        UUID organizationId = item.getOrganizationId();
         ContentType type = types.findByIdAndOrganizationId(item.getContentTypeId(), organizationId)
                 .orElseThrow(() -> new PlatformExceptions.NotFound("Content type", item.getContentTypeId()));
 
@@ -225,8 +227,8 @@ public class ContentService {
      */
     @TenantTransactional
     public ContentDetail submitForReview(UUID itemId) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, SUBMIT_PERMISSION);
-        ContentItem item = requireItem(itemId, organizationId);
+        ContentItem item = requireItemFor(itemId, SUBMIT_PERMISSION);
+        UUID organizationId = item.getOrganizationId();
 
         UUID instanceId = item.getWorkflowInstanceId();
         if (instanceId == null) {
@@ -256,8 +258,8 @@ public class ContentService {
     /** Approves an item under review, moving the item and its workflow instance together. */
     @TenantTransactional
     public ContentDetail approve(UUID itemId, String comment) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, APPROVE_PERMISSION);
-        ContentItem item = requireItem(itemId, organizationId);
+        ContentItem item = requireItemFor(itemId, APPROVE_PERMISSION);
+        UUID organizationId = item.getOrganizationId();
         UUID instanceId = requireRunningReview(item);
 
         workflows.transition(new WorkflowService.TransitionCommand(instanceId, "approve", comment));
@@ -273,8 +275,8 @@ public class ContentService {
     /** Rejects an item under review. The item returns to draft; the review keeps its history. */
     @TenantTransactional
     public ContentDetail reject(UUID itemId, String comment) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, APPROVE_PERMISSION);
-        ContentItem item = requireItem(itemId, organizationId);
+        ContentItem item = requireItemFor(itemId, APPROVE_PERMISSION);
+        UUID organizationId = item.getOrganizationId();
         UUID instanceId = requireRunningReview(item);
 
         workflows.transition(new WorkflowService.TransitionCommand(instanceId, "reject", comment));
@@ -289,8 +291,8 @@ public class ContentService {
 
     @TenantTransactional
     public ContentDetail publish(UUID itemId) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, PUBLISH_PERMISSION);
-        ContentItem item = requireItem(itemId, organizationId);
+        ContentItem item = requireItemFor(itemId, PUBLISH_PERMISSION);
+        UUID organizationId = item.getOrganizationId();
         item.publish();
         items.save(item);
         events.publish(PlatformEvent.of("cms.content.published", organizationId)
@@ -303,8 +305,8 @@ public class ContentService {
 
     @TenantTransactional
     public ContentDetail unpublish(UUID itemId) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, PUBLISH_PERMISSION);
-        ContentItem item = requireItem(itemId, organizationId);
+        ContentItem item = requireItemFor(itemId, PUBLISH_PERMISSION);
+        UUID organizationId = item.getOrganizationId();
         item.unpublish();
         items.save(item);
         events.publish(PlatformEvent.of("cms.content.unpublished", organizationId)
@@ -317,8 +319,8 @@ public class ContentService {
     /** Rolls the published pointer back to an earlier version without deleting history. */
     @TenantTransactional
     public ContentDetail rollback(UUID itemId, int versionNumber) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, PUBLISH_PERMISSION);
-        ContentItem item = requireItem(itemId, organizationId);
+        ContentItem item = requireItemFor(itemId, PUBLISH_PERMISSION);
+        UUID organizationId = item.getOrganizationId();
         ContentVersion target = versions
                 .findByContentItemIdAndOrganizationIdOrderByVersionNumberDesc(item.getId(), organizationId)
                 .stream()
@@ -336,8 +338,8 @@ public class ContentService {
 
     @TenantTransactional(readOnly = true)
     public List<VersionSummary> history(UUID itemId) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, READ_PERMISSION);
-        ContentItem item = requireItem(itemId, organizationId);
+        ContentItem item = requireItemFor(itemId, READ_PERMISSION);
+        UUID organizationId = item.getOrganizationId();
         return versions.findByContentItemIdAndOrganizationIdOrderByVersionNumberDesc(item.getId(), organizationId)
                 .stream()
                 .map(v -> new VersionSummary(v.getId(), v.getVersionNumber(), v.getChangeNote(),
@@ -348,8 +350,8 @@ public class ContentService {
     /** Soft delete: the row remains for export and audit until the retention job runs. */
     @TenantTransactional
     public void delete(UUID itemId) {
-        UUID organizationId = requireTenant(ScopeType.PROJECT, null, WRITE_PERMISSION);
-        ContentItem item = requireItem(itemId, organizationId);
+        ContentItem item = requireItemFor(itemId, WRITE_PERMISSION);
+        UUID organizationId = item.getOrganizationId();
         item.delete();
         items.save(item);
         quotas.record(organizationId, QuotaKey.CONTENT_ITEMS, -1);
@@ -413,6 +415,26 @@ public class ContentService {
     private ContentVersion currentVersion(ContentItem item, UUID organizationId) {
         return item.getCurrentVersionId() == null ? null
                 : versions.findByIdAndOrganizationId(item.getCurrentVersionId(), organizationId).orElse(null);
+    }
+
+    /**
+     * Loads one item and authorizes the operation at the scope the item lives in.
+     *
+     * <p>The project is resolved from the item rather than assumed, for the same reason
+     * {@code list} takes a project id: a role bound to a single project must be able to do the
+     * work that belongs to that project. {@code AuthorizationService.covers} treats an
+     * organization binding as covering every narrower scope, so checking at the project costs
+     * nothing for the common case and is the difference between a project-scoped grant working
+     * and being silently ignored.
+     *
+     * <p>The item is read before the check because its project is what the check is about. The
+     * read is tenant-scoped, and the decision happens before anything is returned or changed.
+     */
+    private ContentItem requireItemFor(UUID itemId, String permission) {
+        UUID organizationId = TenantContextHolder.require().requireOrganizationId();
+        ContentItem item = requireItem(itemId, organizationId);
+        authorization.require(permission, ScopeType.PROJECT, item.getProjectId());
+        return item;
     }
 
     private ContentItem requireItem(UUID itemId, UUID organizationId) {

@@ -258,6 +258,9 @@ class ContentReviewTest {
     private ContentItem item(ContentItem.Status status, UUID workflowInstanceId) {
         ContentItem item = new ContentItem(organizationId, projectId, UUID.randomUUID(), "launch-notes",
                 "en", principalId);
+        // The id is the one the repository is stubbed to answer for, so the workflow is asserted
+        // to run against this item rather than against a generated id nothing else knows.
+        ReflectionTestUtils.setField(item, "id", itemId);
         ReflectionTestUtils.setField(item, "status", status);
         ReflectionTestUtils.setField(item, "workflowInstanceId", workflowInstanceId);
         ReflectionTestUtils.setField(item, "currentVersionId", UUID.randomUUID());
