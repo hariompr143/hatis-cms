@@ -219,9 +219,15 @@ class MetricStoreTest {
         }
 
         @Override
+        @SuppressWarnings("unchecked")
         public <T> List<T> query(String sql, RowMapper<T> rowMapper, Object... args) {
             record(sql, args);
-            return mapper == null ? List.of() : List.of(mapper.apply(safeCast(rowMapper)));
+            if (mapper == null) {
+                return List.of();
+            }
+            // The only production caller asks for MetricPoint rows, which is what the mapper
+            // function was given to produce.
+            return (List<T>) List.of(mapper.apply(safeCast(rowMapper)));
         }
 
         private void record(String sql, Object[] args) {
