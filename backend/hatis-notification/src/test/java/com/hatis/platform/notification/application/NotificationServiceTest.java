@@ -79,7 +79,7 @@ class NotificationServiceTest {
 
         Notification notification = service(List.of(sender)).notify(command(Notification.Channel.IN_APP));
 
-        assertThat(sender.delivered).isEqualTo(1);
+        assertThat(sender.delivered.get()).isEqualTo(1);
         assertThat(notification.getStatus()).isEqualTo(Notification.Status.SENT);
         assertThat(notification.getAttempts()).isEqualTo(1);
 
