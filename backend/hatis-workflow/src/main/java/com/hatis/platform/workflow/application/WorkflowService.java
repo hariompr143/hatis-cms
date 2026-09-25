@@ -210,10 +210,14 @@ public class WorkflowService {
         WorkflowDefinitionSpec spec = parser.parse(definition.getDefinition());
 
         String action = command.action() == null ? "" : command.action().trim();
+        // The state is read into a local because `instance` is reassigned at the save below,
+        // which makes it illegal for a lambda to capture. Naming it also makes the lookup and
+        // the message that reports its failure provably about the same state.
+        String currentState = instance.getCurrentState();
         WorkflowDefinitionSpec.Transition transition = spec
-                .transition(instance.getCurrentState(), action)
+                .transition(currentState, action)
                 .orElseThrow(() -> new PlatformExceptions.StateConflict(
-                        "No transition '" + action + "' leaves state '" + instance.getCurrentState() + "'"));
+                        "No transition '" + action + "' leaves state '" + currentState + "'"));
 
         if (!transition.assignee().permits(actorId,
                 authorization.rolesAt(ScopeType.ORGANIZATION, organizationId))) {
@@ -226,7 +230,7 @@ public class WorkflowService {
                     "'" + action + "' is assigned to " + describe(transition.assignee()));
         }
 
-        String fromState = instance.getCurrentState();
+        String fromState = currentState;
         closeTasksAt(organizationId, instance, transition.assignee(), actorId, command.comment());
 
         boolean terminal = spec.isTerminal(transition.to());
