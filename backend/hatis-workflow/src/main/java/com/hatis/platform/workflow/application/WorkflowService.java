@@ -186,6 +186,18 @@ public class WorkflowService {
                 .resource("workflow_instance", instance.getId())
                 .data(eventData(instance, definition, "start"))
                 .build());
+
+        // Starting a definition whose initial state is terminal completes it, and that is a
+        // second fact rather than a detail of the first. It gets its own event because a
+        // consumer subscribed to `workflow.instance.completed` must not miss an instance that
+        // finished without anybody moving it — and the payload's `status` already says the
+        // instance is finished, so an event that only said "started" would bury the outcome.
+        if (!instance.isRunning()) {
+            events.publish(PlatformEvent.of(eventTypeFor(instance), organizationId)
+                    .resource("workflow_instance", instance.getId())
+                    .data(eventData(instance, definition, "start"))
+                    .build());
+        }
         audit.record(AuditRecord.builder("workflow.instance.started")
                 .resource("workflow_instance", instance.getId())
                 .metadata(Map.of("definition", definition.getKey(),

@@ -39,6 +39,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -210,7 +211,9 @@ class WorkflowServiceTest {
     void aTerminalInitialStateCompletesImmediately() {
         stubTemplate(template(ALREADY_DONE));
         stubNoRunningInstance();
-        stubPersistence();
+        // Only the instance is saved: an initial state with no outgoing transitions opens no
+        // task, which the assertion below then states rather than assumes.
+        when(instances.save(any(WorkflowInstance.class))).thenAnswer(call -> call.getArgument(0));
         stubDetailReads();
 
         WorkflowService.InstanceDetail detail = service.start(
@@ -222,8 +225,11 @@ class WorkflowServiceTest {
         verify(tasks, never()).save(any(WorkflowTask.class));
 
         ArgumentCaptor<PlatformEvent> published = ArgumentCaptor.forClass(PlatformEvent.class);
-        verify(events).publish(published.capture());
-        assertThat(published.getValue().eventType()).isEqualTo("workflow.instance.completed");
+        verify(events, times(2)).publish(published.capture());
+        assertThat(published.getAllValues())
+                .extracting(PlatformEvent::eventType)
+                .as("two facts: it started, and starting it finished it")
+                .containsExactly("workflow.instance.started", "workflow.instance.completed");
     }
 
     @Test
@@ -354,8 +360,9 @@ class WorkflowServiceTest {
         WorkflowDefinition definition = template(EDITORIAL);
         WorkflowInstance instance = instanceAt(definition, "draft");
         stubInstanceLookup(instance, definition);
-        when(authorization.rolesAt(ScopeType.ORGANIZATION, organizationId)).thenReturn(List.of("EDITOR"));
 
+        // No role stub: 'publish' does not leave 'draft' at all, so the assignee is never
+        // consulted. The refusal is about the definition, not about the caller.
         assertThatThrownBy(() -> service.transition(new WorkflowService.TransitionCommand(
                 instance.getId(), "publish", null)))
                 .isInstanceOf(PlatformExceptions.StateConflict.class)
