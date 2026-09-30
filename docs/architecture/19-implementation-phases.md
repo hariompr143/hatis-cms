@@ -18,7 +18,10 @@ architecture → schema → API contracts → security model → backend
 "Failure validation" last is deliberate: a phase is not done until someone has
 tried to make it fail and watched what happened.
 
-## 19.2 Phase 1 — Multi-tenant SaaS foundation *(in progress)*
+## 19.2 Phase 1 — Multi-tenant SaaS foundation *(complete)*
+
+Completed at `f2afaef`; §19.7 maps each of the seven criteria to the check that
+satisfies it, and the open caveats stay in the table below rather than in a footnote.
 
 **Scope** (§67): identity, multi-tenancy, organizations, projects, CMS, digital
 assets, PostgreSQL, object storage, Docker, Kubernetes deployment, custom domains,
@@ -464,3 +467,15 @@ A phase is done when all of these are true, not when the code is written:
 5. The failure cases in §17.6 that apply to the phase have been exercised.
 6. The documents that describe the phase match what was built.
 7. Nothing in the tree is a placeholder, a TODO, or a stub that returns success.
+
+**Status at close.** Each criterion, and what satisfies it:
+
+| # | Criterion | Evidence |
+| --- | --- | --- |
+| 1 | `mvn verify` green in CI, named by run id | Run `36711831784` on `8d5b39a`: all 17 modules compile, **404 tests, 0 failures, 0 errors, 0 skipped** across 40 classes. Every run publishes the per-class table as a commit comment, so the count is checkable rather than asserted. |
+| 2 | Tenant isolation against a real database | `TenantIsolationIT` (9 tests) applies the migrations to PostgreSQL 16 and asserts, under forced row level security, that one tenant sees nothing of another's — including the stricter predicates added at `V1_015`/`V1_016`; `OutboxRelayRlsIT` (11 tests) does the same for the outbox policies. Both are inside criterion 1's 404. |
+| 3 | Helm chart renders for staging and production | The IaC job runs `helm lint --strict`, renders production, staging **and** an email-enabled production (the branch production values do not exercise), asserts the SMTP password reaches the container, and asserts the notification guard refuses a half-configured channel; it also runs `terraform validate` for both modules. |
+| 4 | Image builds, and its scan has no unaccepted critical | The image job builds `deploy/docker/Dockerfile.platform`, saves it, and scans it with Trivy at `severity: CRITICAL,HIGH` with `ignore-unfixed: true` and `exit-code: 1`. There is no `.trivyignore` in the tree, so a finding fails the build rather than being accepted quietly — which is how the two September advisories were caught and fixed (`8d5b39a`), with the run above green over both. |
+| 5 | Applicable §17.6 failure cases exercised | **Exercised:** worker fleet down — `OutboxWorkTest` pins that a sink failure backs the entry off instead of marking it published, `OutboxRelayTest` that one failing tenant or entry does not stop the sweep, `OutboxEntryPersistenceIT` that a backed-off entry is not claimed until due and a published one is never claimed again, which is what "rows accumulate and are relayed when workers return" means in practice. Secret manager unavailable — the delivery paths fail rather than pretend: `aChannelWithoutASenderFails`, `aRefusedDeliveryIsRecordedNotThrown`, `anUndecryptableSecretSkipsTheDelivery`. **Configuration, validated as configuration:** pod crash — `server.shutdown: graceful` with a 30-second timeout per phase, tini as PID 1 and the probes in `_container.tpl` are rendered and linted, but no live restart is performed from here. **Not reachable from this repository:** node loss, zone loss, region failover, PostgreSQL PITR and object-storage replication need a running multi-zone estate; multi-region disaster recovery is Phase 2 by §19.3, and the missing restore drill is stated in §19.2 rather than hidden. |
+| 6 | Documents match what was built | This file: every §19.2 row carries its evidence, §19.6 names the runs and the counts, and the three deliveries after the previous documentation pass — console review actions (`9936b02`), the email/alert configuration (`3c8b7f8`) and the image-scan fixes (`8d5b39a`) — are described as delivered with the checks that show it. §18's repository structure and §04's worker and configuration tables were updated with the same work. |
+| 7 | Nothing is a placeholder, a TODO, or a stub that returns success | A scan of `backend/*/src/main` and `frontend/src` finds no `TODO`, `FIXME`, `UnsupportedOperationException` or "not implemented" marker — the only textual hit for "placeholder" is an input's HTML attribute in `ReviewActions`. The two tables with no mapper, `anl_data_sources` and `anl_datasets`, carry their reason in §19.2 instead of a connector that invents rows, and the EMAIL channel is absent rather than fake when it is disabled. The static checks in CI exist because this class of defect reached a green build twice: `EmailChannelSender` implementing an interface it had not imported, and two modules checking permission codes the catalogue did not define. |

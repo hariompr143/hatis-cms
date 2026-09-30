@@ -8,7 +8,7 @@ context can be found, reviewed and — later — extracted without a search.
 ```
 hatis-cms/
 ├── backend/                  Maven reactor, 16 modules
-├── frontend/                 Next.js console (Phase 1, in progress)
+├── frontend/                 Next.js console (Phase 1 delivered)
 ├── deploy/
 │   ├── docker/               Containerfiles
 │   └── helm/                 Chart + per-environment values
