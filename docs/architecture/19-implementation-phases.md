@@ -43,10 +43,10 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Audit: hash-chained, append-only | Done | `V1_012`, `TenantIsolationIT` |
 | Events: transactional outbox, signed webhooks | Done | `hatis-shared/event` |
 | Secrets: Env / Vault / AWS adapters, envelope encryption | Done | `hatis-infrastructure` |
-| Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/`; image builds and Trivy exits clean at CRITICAL,HIGH (§19.6) |
+| Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/`; image builds and Trivy exits clean at CRITICAL,HIGH (§19.6), including for a finding published after the base image was built, because the runtime stage upgrades the base packages at build time (§19.6) |
 | Architecture boundaries enforced at build time | Done | `HexagonalArchitectureTest` |
-| Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`; lint, typecheck, tests and `next build` green in CI (§19.6) |
-| CI green end to end | Done | All eight jobs green in run `36180858909` on commit `b4a01f6`: 404 tests across 40 classes. The run before it, `35509303723` on `3430eaf`, was green at 266 tests; the 138 in between are the workflow, notification, analytics and CMS review tests added since. See §19.6. |
+| Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`; content items are submitted, approved and rejected from the content page, not only through the API; lint, typecheck, 50 tests and `next build` green in CI (§19.6) |
+| CI green end to end | Done | All eight jobs green in run `36711831784` on commit `8d5b39a`: 404 tests across 40 classes, the frontend's lint, typecheck, 50 tests and `next build`, the IaC renders and the image scan. That run is the previous green one (`36180858909` on `b4a01f6`, the same 404) plus the two fixes the image scan needed; the run before that, `35509303723` on `3430eaf`, was green at 266 tests, and the 138 in between are the workflow, notification, analytics and CMS review tests added since. See §19.6. |
 | GitHub integration: inbound webhooks and their management | Done | `hatis-integration`; HMAC-verified push receiver plus create/connect/rotate/disconnect, 48 tests |
 | Outbound webhook security core | Done | `hatis-integration`; `WebhookUrlValidator` (SSRF target checks) and `WebhookSigner` (delivery HMAC), 50 tests. Delivery itself is not delivered — see the outbound row below. |
 | Outbound webhook persistence | Done | `WebhookEndpoint` and `WebhookDelivery` map `int_webhook_endpoints` and `int_webhook_deliveries`, including the platform's first PostgreSQL `text[]` column; `V1_014` adds the bookkeeping columns deliveries need. `WebhookEndpointPersistenceIT` round-trips both against PostgreSQL 16 under forced RLS, 9 tests. |
@@ -57,6 +57,8 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Notification | Done | The row is the queue, the delivery record and the inbox: written `PENDING` before anything is sent, so a failed delivery is a row a customer can see rather than a line in a log. `IN_APP` is a no-op, `WEBHOOK` reuses the outbound delivery path, and `EMAIL` exists only where `hatis.notification.email.enabled` is true — where it is false the channel is absent rather than fake, and the notification is recorded as failed. No route takes a user id: the inbox is the caller's, and somebody else's notification reads as not found rather than forbidden. `NotificationTest`, `NotificationServiceTest`, `EmailChannelSenderTest`, 25 tests. |
 | Analytics | Done | Metrics in, bucketed storage, series and alert evaluation out. Aggregation happens in SQL with the aggregate function and `date_trunc` unit chosen from closed enums, so no request can put text into the statement; windows are bounded to 90 days because the difference between reading an index and aggregating a table is one query parameter. Alerts evaluate on a schedule per tenant and deliver through notification — one message per recipient per channel, with `WEBHOOK` covered by the published event rather than a second copy. `anl_data_sources` and `anl_datasets` are described by the schema and mapped by nothing, because the platform has no connectors: a connector that returned invented rows would be a placeholder, and platform-event rollups are the same work as the rollup job and belong to Phase 2. `AlertWorkTest`, `AnalyticsServiceTest`, `MetricStoreTest`, `AlertTest`, `DashboardTest` and three domain tests, 57 tests. |
 | CMS review flow | Done | Submitting an item starts the seeded editorial definition against it, approving and rejecting are decided by the engine before the item moves, and a rejected item is reworked before it can be reviewed again. Building it exposed a defect that made every content endpoint answer 403 to every caller: the module checked `content:read`, `content:publish` and friends where the catalogue defines `cms:content:read`, `cms:content:publish` and so on, and because authorization matches the code against grants, a code that is not in the catalogue is a closed door rather than a weaker check. `V1_019` adds the codes that were genuinely absent — the same problem existed in the deployment module with `application:*` and `release:*` — and `tools/check_permissions.py` now fails CI for the third instance. `ContentReviewTest`, 8 tests. |
+| CMS review in the console | Done | The content page carries the decision the status allows: `DRAFT` offers submit, `IN_REVIEW` offers approve and reject, anything else offers nothing — a closed map in `ReviewActions`, so an unrecognised status renders no control rather than a broken one. The control posts to `/api/content/[itemId]/review`, a route handler that validates the action against its own closed set, reads the httpOnly token on the server instead of exposing it to the browser, derives the idempotency key from `(action, itemId, comment)` so a double click is one decision, and maps the platform's error body to `{code, message, correlationId}`. Building it exposed a console defect worth recording: an `ApiError` rebuilt in the browser with `Object.assign` lost its class, so every error rendered as "Unexpected error" and the code the API had gone to the trouble of returning was invisible; `ErrorPanel` now reads the coded branch too. `ReviewActions.test.tsx` (8 tests) is new and `ErrorPanel.test.tsx` gained the case, both inside the frontend's 50 tests across 6 files. |
+| Deployment configuration: email channel and alert sweep | Done | `hatis.notification.email.*` (`enabled` default false, plus host, port, from, username and `passwordSecret` as a secret-store **path**, never a password) and `hatis.analytics.alert-interval` are read from the environment in `application.yml` and set through chart values. The chart refuses to render email enabled without a host and a passwordSecret (`templates/notification-check.yaml`), derives the password variable's name from the path exactly as the environment secret store derives it, so changing `passwordSecret` cannot leave the two silently disagreeing, and hashes the rendered shape of the configuration — names and flags, never the password and never the host — into a `checksum/notification` annotation on the api and worker deployments so a values change rolls the pods. Both `values/staging.yaml` and `values/production.yaml` state that email is off and why — there is no fake relay. CI renders production, staging and an email-enabled production, asserts the SMTP password reaches the container, and asserts the guard refuses an enabled channel with no host. |
 | Outbound webhook transport | Done | `WebClientWebhookTransport` posts to the customer URL, connecting to the address `WebhookUrlValidator.resolveDeliverable` approved rather than resolving a second time, which closes the DNS rebinding gap. The pinning itself is not exercised by any test in this repository — see the outbound row below. |
 
 **Open in Phase 1**
@@ -65,7 +67,6 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | --- | --- |
 | Integration / outbound — open caveats | Delivered end to end: an event published to the outbox is drained per tenant, fanned out to subscribed endpoints, signed, delivered over an SSRF-guarded transport, and retried with backoff. Three caveats are open and stated rather than buried. **(1)** The address pinning that closes the DNS rebinding gap is argued from the code — no test in this repository opens a real socket. **(2)** A tenant data-key rotation invalidates endpoint secrets written under the previous key; `dek_id` records which key was used, but nothing re-encrypts yet. **(3)** Both background jobs walk every tenant on a fixed interval, which is the wrong shape at a few thousand organizations: most sweeps run one empty query per organization with no queued work. The replacement is a work-claim table listing only organizations with outstanding work; it is not built. Two further items were open and are now closed. `OutboxRelay` used to read `plat_outbox` with no tenant context set — that table carries forced row level security and the migrations explicitly strip `BYPASSRLS` from `hatis_app`, so the query returned an empty list rather than an error, and **no event was ever published** while every metric looked healthy. It is now two beans: `OutboxRelay` walks `plat_tenant_directory`, binds each tenant in turn, and runs a separate unbound pass for platform-wide rows, while `OutboxWork` does the reading and publishing inside that tenant's transaction. The split is the fix, not tidying — Spring applies `@TenantTransactional` through a proxy, so a bean calling its own transactional method gets no transaction and no tenant setting at all, and the only Spring context in this repository wires the datasource and JPA rather than the relay beans, so it would not have caught a self-injected proxy being wrong. `OutboxRelayRlsIT` (11 tests) pins the database behaviour against a real PostgreSQL 16; `OutboxRelayTest` and `OutboxWorkTest` (8 each) pin that work is claimed across a bean boundary and that a failed entry stays queued rather than being marked done. Background jobs could not enumerate tenants from `org_organizations` — it is in the strict tenant list — so `V1_015` adds `plat_tenant_directory` (ids only, no row level security, kept in sync by a trigger). `V1_016` then splits the outbox policy into one policy per command, because `V1_015`'s widened read combined with a strict write left a platform-wide row readable but never publishable, which would have republished it on every sweep forever. |
 | Backups | Documented (`17`); no restore drill has been executed, so the RPO/RTO figures are targets, not results. |
-| Content review in the console | The API supports submit, approve and reject (`/v1/content/items/{id}/submit`, `/approve`, `/reject`) and the workflow's tasks are readable through `/v1/workflows/tasks`, but the console's content page lists items with a status filter and offers no review actions, so a reviewer works through the API today. |
 | OWASP dependency-check | Runs only when an `NVD_API_KEY` secret exists; without one it skips with a notice, because dependency-check cannot fetch the NVD cache inside a job timeout unkeyed. Trivy is the gate that actually fails a build. See §19.6. |
 
 ## 19.3 Phase 2 — Enterprise
@@ -92,8 +93,30 @@ customer content into a third-party model without a per-tenant control.
 
 Stated plainly, because a claim of "done" without a named check is worth nothing.
 
-**Verified in GitHub Actions, run `36180858909` on commit `b4a01f6` — every job that
-applies to the change green:**
+**Verified in GitHub Actions, run `36711831784` on commit `8d5b39a` — all eight jobs
+green, including the image job the previous commit failed:**
+
+- **Backend (Java 21 / Spring Boot): success.** 17 modules compile and `mvn verify`
+  completes: **404 tests, 0 failures, 0 errors, 0 skipped** across 40 classes. The count
+  is deliberately unchanged from `36180858909`: this run is that tree plus two image
+  fixes, so a different number would mean something moved that should not have.
+- **Build and scan container image: success**, after the two findings the advisory wave
+  introduced were fixed — one in `app.jar`, one in the base image. Both are below.
+- **Frontend (Next.js / TypeScript): success, and it ran.** It reported frontend
+  changes for a commit that touches only `backend/`, `deploy/` and the workflow file,
+  so the reason the filter said so is not established — the detection step's own log
+  is not retrievable from this sandbox. The result is not in doubt, though: this run's
+  frontend job executed rather than being skipped, and it is the first green run to
+  cover the console work in `9936b02` — lint, typecheck, **50 tests across 6 files**
+  and `next build`. The earlier backend-only run skipped the job, which is what a
+  skip looks like beside this.
+- **IaC validation: success**, rendering production, staging and an email-enabled
+  production, asserting the SMTP password reaches the container, and asserting the chart
+  refuses to render an enabled email channel with no host.
+- **Dependency scan, secret scan and SAST (Semgrep): success.**
+
+**Verified earlier, in GitHub Actions, run `36180858909` on commit `b4a01f6` — every job
+that applies to the change green:**
 
 - **Backend (Java 21 / Spring Boot): success.** All 17 modules compile and `mvn verify`
   completes: **404 tests, 0 failures, 0 errors, 0 skipped** across 40 classes, up from
@@ -347,6 +370,28 @@ Data versions its BOM by release train (`2025.0.x`) while `spring-data-commons` 
 directly; and a blank severity cell in Trivy's table inherits the row above it, which
 is how CVE-2026-65182 was first misread as HIGH when it is CRITICAL.
 
+**A green gate can go red with nothing in the tree changing, and this one did.** Run
+`36711002653` on `9936b02` failed the image scan on two findings published the day
+before, one in each half of the image: `jackson-databind` 2.21.4 inside `app.jar`
+(CVE-2026-68497, fixed in 2.18.10 / 2.21.6 / 2.22.2) and `libssl3` 3.0.2-0ubuntu1.29 in
+the runtime stage (USN-8847-1, fixed in 3.0.2-0ubuntu1.30). The commit immediately
+before it had been green on the same tree, and that is the whole lesson: Trivy reads
+"fixed" from the Ubuntu security tracker and the upstream advisories, so a build that
+is reproducible in every other sense is not a build that stays green. The two halves
+needed two different answers. Jackson moves to 2.21.6 through the `jackson-bom.version`
+property — the smallest clearing bump on the line the BOM already tracks, resolved by
+the same import-above-the-Boot-BOM mechanism the other pins in `backend/pom.xml` use.
+The base image gets `apt-get upgrade` in the runtime stage before `tini` and `curl`
+are installed, upgrading every package that has a published fix rather than naming
+`libssl3`: the next USN lands in a different base package, and a fix list that has to
+be edited before a build can pass is a list that gets edited in a hurry. This was also
+the first finding in this project that was not inside `app.jar` — the first the
+Dockerfile had to answer rather than the POM. The failure report taught something of
+its own: it grepped the scan output, and the comment it posted showed `Total: 2` above
+a single row, which no one can act on. It now prints the whole capture — only fixable
+CRITICAL/HIGH findings reach that file, so it stays short — and `36711831784` on
+`8d5b39a` was green with the scan included.
+
 **Inbound webhooks and a constraint worth recording.** `hatis-integration` now receives
 GitHub push deliveries: the signature is verified over the raw body before anything is
 parsed, the delivery is audited, and a platform event is published. Implementing it
@@ -382,8 +427,9 @@ secrets are accepted is what makes rotation ineffective against a leaked one.
 - `tools/check_permissions.py`: every permission code the code names — 13 constants
   and 46 code-shaped literals — is one the migrations seed. Added after two modules
   shipped checks against codes the catalogue did not define, which denies everybody.
-- Console: the frontend CI job is green — lint, typecheck, its Vitest suite and
-  `next build`. It was also run locally in earlier sessions with the same result.
+- Console: the frontend CI job is green — lint, typecheck, 50 Vitest tests across
+  six files, and `next build`. It was also run locally in earlier sessions with the
+  same result.
 
 **Found by running things rather than reading them.** Three defects below would have
 reached production and are recorded because the checks that caught them are now part
