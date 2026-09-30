@@ -27,6 +27,11 @@ spec:
         app.kubernetes.io/component: api
       annotations:
         checksum/secret: {{ include (print $.Template.BasePath "/secret-check.yaml") . | sha256sum }}
+        # Notification settings reach the container as environment variables, so changing
+        # them changes neither the image nor the Secret. Without this checksum an edited
+        # email block would leave running pods on the old configuration until something
+        # else happened to move them.
+        checksum/notification: {{ include (print $.Template.BasePath "/notification-check.yaml") . | sha256sum }}
     spec:
       serviceAccountName: {{ include "hatis.serviceAccountName" . }}
       {{- with .Values.global.imagePullSecrets }}
@@ -94,6 +99,8 @@ spec:
       labels:
         {{- include "hatis.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: worker
+      annotations:
+        checksum/notification: {{ include (print $.Template.BasePath "/notification-check.yaml") . | sha256sum }}
     spec:
       serviceAccountName: {{ include "hatis.serviceAccountName" . }}
       {{- with .Values.global.imagePullSecrets }}

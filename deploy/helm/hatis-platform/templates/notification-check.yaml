@@ -1,0 +1,42 @@
+{{/*
+Guards the email channel against being half-configured.
+
+Email is off by default, and the default is safe: with it off there is no EMAIL
+sender, and a notification routed to that channel is recorded as failed where the
+recipient can see it. Turning it on makes delivery a promise the platform keeps,
+which means the settings it then needs must actually be there. A missing host
+would otherwise produce a running deployment whose every email fails at the
+first send, discovered by whichever customer raised one.
+
+The fingerprint half of this file is not decoration either. The pod template
+carries no checksum over the values it renders, so a change to the chart's
+`notification.email` block alone would leave running pods untouched; recording
+the *shape* (never the password, never a host) in a ConfigMap whose name is part
+of the deployment's references gives an operator something to see and a rollout
+something to move.
+*/}}
+{{- if .Values.notification.email.enabled }}
+{{- if not .Values.notification.email.host }}
+{{- fail "notification.email.enabled is true but notification.email.host is empty. Set the SMTP host, or leave email disabled — an enabled channel with nowhere to send is a delivery failure waiting for its first recipient." }}
+{{- end }}
+{{- if not .Values.notification.email.passwordSecret }}
+{{- fail "notification.email.enabled is true but notification.email.passwordSecret is empty. It is a secret-store path, not a password; the Secret must also carry an smtp-password key." }}
+{{- end }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hatis.fullname" . }}-notification
+  labels:
+    {{- include "hatis.labels" . | nindent 4 }}
+data:
+  email-enabled: {{ .Values.notification.email.enabled | quote }}
+  {{- if .Values.notification.email.enabled }}
+  email-port: {{ .Values.notification.email.port | quote }}
+  email-starttls: {{ .Values.notification.email.startTls | quote }}
+  # Where the credential is read from, and from which Secret it is mounted. Names only:
+  # the value is never rendered, and a ConfigMap is not a place for it.
+  email-password-secret-path: {{ .Values.notification.email.passwordSecret | quote }}
+  email-password-secret-name: {{ include "hatis.secretName" . | quote }}
+  {{- end }}
+  analytics-alert-interval: {{ .Values.analytics.alertInterval | quote }}

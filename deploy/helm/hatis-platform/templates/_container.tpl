@@ -17,6 +17,36 @@ env:
     value: "true"
   - name: HATIS_EVENT_TRANSPORT
     value: {{ .ctx.Values.events.transport | quote }}
+  - name: HATIS_ANALYTICS_ALERT_INTERVAL
+    value: {{ .ctx.Values.analytics.alertInterval | quote }}
+  {{- if .ctx.Values.notification.email.enabled }}
+  - name: HATIS_NOTIFICATION_EMAIL_ENABLED
+    value: "true"
+  - name: HATIS_NOTIFICATION_EMAIL_HOST
+    value: {{ .ctx.Values.notification.email.host | quote }}
+  - name: HATIS_NOTIFICATION_EMAIL_PORT
+    value: {{ .ctx.Values.notification.email.port | quote }}
+  - name: HATIS_NOTIFICATION_EMAIL_USERNAME
+    value: {{ .ctx.Values.notification.email.username | quote }}
+  - name: HATIS_NOTIFICATION_EMAIL_FROM
+    value: {{ .ctx.Values.notification.email.from | quote }}
+  - name: HATIS_NOTIFICATION_EMAIL_START_TLS
+    value: {{ .ctx.Values.notification.email.startTls | quote }}
+  - name: HATIS_NOTIFICATION_EMAIL_TIMEOUT
+    value: {{ .ctx.Values.notification.email.timeout | quote }}
+  - name: HATIS_NOTIFICATION_EMAIL_PASSWORD_SECRET
+    value: {{ .ctx.Values.notification.email.passwordSecret | quote }}
+  # The secret store is addressed by path, and the environment store derives the variable
+  # name from it, so the mounted variable has to be named the same way the store will look
+  # for it. Doing that here rather than hard-coding HATIS_SMTP_PASSWORD is what keeps
+  # `passwordSecret` configurable without the two silently disagreeing.
+  - name: {{ .ctx.Values.notification.email.passwordSecret | upper | replace "/" "_" | replace "-" "_" | replace "." "_" }}
+    valueFrom:
+      secretKeyRef: { name: {{ include "hatis.secretName" .ctx }}, key: smtp-password }
+  {{- else }}
+  - name: HATIS_NOTIFICATION_EMAIL_ENABLED
+    value: "false"
+  {{- end }}
   - name: HATIS_SECRETS_PROVIDER
     value: {{ .ctx.Values.secretsProvider | quote }}
   - name: HATIS_STORAGE_PROVIDER

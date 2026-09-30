@@ -62,3 +62,4 @@ dependency-reduced-pom.xml
 .flattened-pom.xml
 semgrep-report.*
 trivy-report.*
+__pycache__/

@@ -9,12 +9,53 @@ team topology, not a design goal.
 | Deployable | Contents | Scaling |
 |------------|----------|---------|
 | `hatis-platform` | All 16 modules (control plane + data plane APIs, workers) | Horizontal, stateless, `N ≥ 2` |
-| `hatis-worker` | Same image, `HATIS_ROLE=worker` — outbox relay, operations executor, webhook dispatcher, certificate renewal, usage rollup | Horizontal, concurrency-limited |
+| `hatis-worker` | Same image, `HATIS_ROLE=worker` — outbox relay, webhook delivery worker, alert evaluation | Horizontal, concurrency-limited |
 | `hatis-connector` | Customer-side agent for private deployments (Phase 3) | One per customer environment |
 
 The same container image runs API and worker roles, selected by the `HATIS_ROLE`
 environment variable. That keeps one artifact to scan, sign and promote, while
 letting the two roles scale and fail independently.
+
+Three scheduled jobs exist and all three are `hatis.role=worker` (with
+`matchIfMissing`, so a single-role development install still runs them):
+
+| Job | Interval property | Default | What it does |
+|-----|-------------------|---------|--------------|
+| `OutboxRelay` | `hatis.events.relay-interval` | `2s` | Walks the tenant directory, binds each tenant and publishes its outbox rows |
+| `WebhookDeliveryWorker` | `hatis.events.webhook-interval` | `5s` | Sends the deliveries the relay recorded, outside the publishing transaction |
+| `AlertScanJob` | `hatis.analytics.alert-interval` | `60s` | Evaluates each tenant's alerts and delivers through notification |
+
+An API replica runs none of them: a second relay would double every event, and a
+second alert sweep would double every notification, with each job's own idempotency
+the only thing hiding it. Two jobs named in this table until recently do not exist
+and are not planned for Phase 1 — operations are executed inline by
+`DeploymentService` rather than by a worker, and certificate renewal belongs to
+cert-manager, which renews without the platform running. A usage rollup is Phase 2,
+and it is the same work as bringing platform events into analytics.
+
+### Platform configuration
+
+These are settings for the installation rather than for a tenant, so they live in
+the chart's values (`deploy/helm/hatis-platform/values.yaml`) and reach the pod as
+environment variables named after the same keys:
+
+| Setting | Environment variable | Default | Note |
+|---------|----------------------|---------|------|
+| `hatis.notification.email.enabled` | `HATIS_NOTIFICATION_EMAIL_ENABLED` | `false` | Off means no `EMAIL` sender exists at all |
+| `hatis.notification.email.host` | `HATIS_NOTIFICATION_EMAIL_HOST` | — | Required when email is enabled; the chart refuses to render without it |
+| `hatis.notification.email.passwordSecret` | `HATIS_NOTIFICATION_EMAIL_PASSWORD_SECRET` | `hatis/smtp/password` | A secret-store **path**, never a password |
+| `hatis.analytics.alert-interval` | `HATIS_ANALYTICS_ALERT_INTERVAL` | `60s` | Bounds how late a firing can be |
+| `hatis.role` | `HATIS_ROLE` | `api` | `worker` selects the scheduled jobs above |
+
+The SMTP password is read from the secret store at that path per message, and the
+environment-backed store derives its variable name from the path
+(`hatis/smtp/password` → `HATIS_SMTP_PASSWORD`). The chart mounts the pod variable
+under that derived name from the `smtp-password` key of the installation Secret, and
+CI renders the chart with email enabled and asserts that the derived name appears in
+the manifest — if the two drifted apart, the pod would start and every send would fail
+with an empty password. The chart also refuses to render email while the host is
+unset, so a half-configured channel fails an install rather than a customer's first
+notification.
 
 ## 2. Maven module boundaries
 

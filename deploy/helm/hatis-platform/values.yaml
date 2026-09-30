@@ -40,7 +40,8 @@ worker:
     limits:   { cpu: "1",  memory: 1Gi }
 
 # -- Name of an existing Secret holding database, redis and signing-key material.
-# Required keys: db-url, db-username, db-password, redis-url, token-signing-key.
+# Required keys: db-url, db-username, db-password, redis-url, token-signing-key,
+# and smtp-password when notification.email.enabled is true.
 existingSecret: hatis-platform-secrets
 
 database:
@@ -55,6 +56,28 @@ redis:
 events:
   transport: outbox          # outbox | kafka
   kafkaBootstrap: ""
+
+analytics:
+  # -- How often each tenant's alerts are evaluated (a Spring duration: 60s, 5m).
+  # Bounds how late a firing can be; it does not change what fires.
+  alertInterval: 60s
+
+notification:
+  email:
+    # -- Off by default, and that default is the design. Without a mail server the EMAIL
+    # channel has no sender at all: a notification routed to it is recorded as failed and
+    # visible in the recipient's inbox as failed, rather than reported as sent to nobody.
+    enabled: false
+    host: ""
+    port: 587
+    username: ""
+    # -- Secret-store path holding the SMTP password — never the password. The environment
+    # store reads it as the variable derived from the path (hatis/smtp/password ->
+    # HATIS_SMTP_PASSWORD), which this chart mounts from the Secret under `smtp-password`.
+    passwordSecret: hatis/smtp/password
+    from: no-reply@hatis.example
+    startTls: true
+    timeout: 5s
 
 secretsProvider: environment # environment | vault | aws | kubernetes
 

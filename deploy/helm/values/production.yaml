@@ -66,3 +66,19 @@ storage:
   s3:
     bucket: hatis-production-assets
     region: us-east-1
+
+# Email is off until a customer's mail relay is recorded here. Enabling it without a host
+# fails the render (deploy/helm/hatis-platform/templates/notification-check.yaml) rather
+# than producing a deployment whose every email fails at the first send.
+notification:
+  email:
+    enabled: false
+    # host: smtp.customer.example
+    # username: hatis
+    # from: no-reply@customer.example
+    # passwordSecret: hatis/smtp/password
+
+analytics:
+  # One minute is the default and the right default: alerts are thresholds, not a pager
+  # substitute, and a shorter interval multiplies sweeps across every tenant.
+  alertInterval: 60s

@@ -135,6 +135,26 @@ hatis:
     provider: ${HATIS_STORAGE_PROVIDER:s3}
   secrets:
     provider: ${HATIS_SECRETS_PROVIDER:environment}
+  notification:
+    email:
+      # Off by default, and the default is the design: an installation that has not
+      # configured a mail server must not pretend to send mail. With this false there is no
+      # EMAIL channel sender at all, and a notification raised on that channel is recorded
+      # as failed — which a customer can see — rather than delivered to nobody.
+      enabled: ${HATIS_NOTIFICATION_EMAIL_ENABLED:false}
+      host: ${HATIS_NOTIFICATION_EMAIL_HOST:localhost}
+      port: ${HATIS_NOTIFICATION_EMAIL_PORT:587}
+      username: ${HATIS_NOTIFICATION_EMAIL_USERNAME:}
+      # A secret-store path, never a password. The environment store reads it as the
+      # variable derived from the path: hatis/smtp/password -> HATIS_SMTP_PASSWORD.
+      password-secret: ${HATIS_NOTIFICATION_EMAIL_PASSWORD_SECRET:}
+      from: ${HATIS_NOTIFICATION_EMAIL_FROM:no-reply@hatis.example}
+      start-tls: ${HATIS_NOTIFICATION_EMAIL_START_TLS:true}
+      timeout: ${HATIS_NOTIFICATION_EMAIL_TIMEOUT:5s}
+  analytics:
+    # How often each tenant's alerts are evaluated. This bounds how late a firing can be:
+    # a threshold crossed at 09:00 is reported within one interval, not immediately.
+    alert-interval: ${HATIS_ANALYTICS_ALERT_INTERVAL:60s}
 
 springdoc:
   api-docs:

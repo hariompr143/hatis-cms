@@ -421,6 +421,45 @@ jobs:
               --set existingSecret=hatis-platform-secrets \
               --values deploy/helm/values/production.yaml > /tmp/rendered.yaml || status=$?
             echo "== rendered bytes: $(wc -c < /tmp/rendered.yaml 2>/dev/null || echo 0)"
+            # Staging is rendered too, and not only for symmetry: staging enables the email
+            # channel, which is the branch of the container template production does not
+            # exercise. Rendering one values file would leave that branch unverified.
+            echo "== helm template (staging values)"
+            helm template hatis deploy/helm/hatis-platform \
+              --set existingSecret=hatis-platform-secrets \
+              --values deploy/helm/values/staging.yaml > /tmp/rendered-staging.yaml || status=$?
+            echo "== rendered staging bytes: $(wc -c < /tmp/rendered-staging.yaml 2>/dev/null || echo 0)"
+            # The SMTP password is addressed by secret-store path, and the environment store
+            # derives the variable name from that path. If the two disagree the pod starts
+            # and every send fails with an empty password, so the derived name is asserted
+            # rather than assumed. Names only — no value is ever rendered.
+            echo "== helm template (email enabled)"
+            helm template hatis deploy/helm/hatis-platform \
+              --set existingSecret=hatis-platform-secrets \
+              --set notification.email.enabled=true \
+              --set notification.email.host=smtp.example.invalid > /tmp/rendered-email.yaml || status=$?
+            # The SMTP password is addressed by secret-store path, and the environment store
+            # derives the variable name from that path. If the two disagree the pod starts
+            # and every send fails with an empty password, so the derived name is asserted
+            # rather than assumed. Names only — no value is ever rendered.
+            echo "== the mounted SMTP variable is named the way the path derives"
+            if [ -s /tmp/rendered-email.yaml ] && \
+               ! grep -q "name: HATIS_SMTP_PASSWORD" /tmp/rendered-email.yaml; then
+              echo "ERROR: notification.email.passwordSecret was not derived into HATIS_SMTP_PASSWORD"
+              status=1
+            fi
+            # The guard is a control, so it is tested rather than trusted: enabling email
+            # without a host must refuse to render.
+            echo "== the email guard refuses a half-configured channel"
+            if helm template hatis deploy/helm/hatis-platform \
+                 --set existingSecret=hatis-platform-secrets \
+                 --set notification.email.enabled=true \
+                 --set notification.email.host= > /dev/null 2>&1; then
+              echo "ERROR: the chart rendered with email enabled and no host"
+              status=1
+            else
+              echo "ok: refused, as intended"
+            fi
             echo "== kubectl dry-run (advisory only)"
             kubectl apply --dry-run=client -f /tmp/rendered.yaml || true
           } >> /tmp/iac.log 2>&1

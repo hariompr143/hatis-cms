@@ -49,3 +49,19 @@ storage:
   s3:
     bucket: hatis-staging-assets
     region: us-east-1
+
+# Email is left off in staging for the same reason it is off in production: there is no
+# mail relay for it to point at, and naming one here would describe infrastructure that
+# does not exist. The chart's email-enabled branch is not left unverified for that
+# reason — CI renders it explicitly with `--set notification.email.enabled=true` and
+# asserts the SMTP variable is mounted under the name the secret-store path derives.
+# Enabling it for a real install means setting `enabled`, `host` and `username` here and
+# adding an `smtp-password` key to the installation Secret.
+notification:
+  email:
+    enabled: false
+
+analytics:
+  # Staging evaluates more often than production so a misfiring rule is noticed in
+  # minutes rather than in an hour.
+  alertInterval: 30s
