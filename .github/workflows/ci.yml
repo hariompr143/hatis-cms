@@ -562,8 +562,12 @@ jobs:
             echo "### Image pipeline failed for \`${GITHUB_SHA::7}\`"
             if [ -s /tmp/trivy-image.txt ]; then
               echo '```'
-              # The findings table first: that is what a scan failure is about.
-              grep -E "CRITICAL|HIGH|CVE-|Library|Vulnerability|===" /tmp/trivy-image.txt | head -n 80
+              # The whole capture, not a grep of it. The exit code comes from the table,
+              # so the comment has to show what the gate saw: the previous grep printed
+              # "Total: 2" above a single row, and reconciling that was impossible
+              # without an artifact the runner log is the only copy of. Only fixable
+              # CRITICAL/HIGH findings reach this file, so it stays short.
+              head -n 120 /tmp/trivy-image.txt
               echo '```'
             else
               echo "_No scan output captured, so the failure was before the scan._"

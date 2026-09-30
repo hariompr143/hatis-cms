@@ -40,8 +40,19 @@ RUN mvn -B -ntp -DskipTests package \
 FROM eclipse-temurin:21-jre-jammy AS runtime
 
 # tini gives correct PID 1 signal handling so graceful shutdown works.
+#
+# The upgrade is not tidying. `eclipse-temurin:21-jre-jammy` is a mutable tag that ships
+# the Ubuntu packages as they stood when the base image was published, and the image scan
+# gates on fixable CRITICAL/HIGH findings. That is how this stage went red on libssl3
+# 3.0.2-0ubuntu1.29, fixed in 3.0.2-0ubuntu1.30 by USN-8847-1 (CVE-2026-84782 among
+# eight). Trivy takes "fixed" from the Ubuntu security tracker, so a fix published after
+# the base image was built is still a finding here until a build installs it.
+# Upgrading every package that has one, instead of naming libssl3, is deliberate: the
+# next USN lands in a different base package, and a fix list that must be edited before a
+# build can pass is a list that gets edited in a hurry.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends tini curl \
+ && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tini curl \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd --system --gid 10001 hatis \
  && useradd  --system --uid 10001 --gid 10001 --home-dir /app --shell /usr/sbin/nologin hatis
