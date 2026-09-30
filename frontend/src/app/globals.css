@@ -97,6 +97,13 @@ button, .button {
 }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 button.secondary { background: var(--surface-2); border: 1px solid var(--border); color: var(--text); }
+button.danger { background: var(--negative); }
+
+/* A row's review cell holds a comment box and up to two buttons, so it wraps rather
+   than widening the table. */
+.review-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-width: 220px; }
+.review-actions input { width: auto; flex: 1 1 120px; padding: 6px 10px; font-size: 13px; }
+.review-actions .error-panel { flex: 1 1 100%; }
 
 label { display: block; margin-bottom: 12px; color: var(--text-dim); font-size: 13px; }
 input, select, textarea {

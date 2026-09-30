@@ -1,6 +1,7 @@
 import { PageResponse, request, query } from '@/lib/api';
 import { ErrorPanel } from '@/components/ErrorPanel';
 import { EmptyState } from '@/components/EmptyState';
+import { ReviewActions } from '@/components/ReviewActions';
 import { StatusBadge } from '@/components/StatusBadge';
 import { formatRelativeTime } from '@/lib/format';
 import { accessToken } from '@/lib/session';
@@ -63,7 +64,12 @@ export default async function ContentPage({
     <>
       <div className="page-head">
         <h1>Content</h1>
-        <p className="muted">Drafts are never served; only published versions reach the delivery API.</p>
+        <p className="muted">
+          Drafts are never served; only published versions reach the delivery API. Submitting an item
+          starts the editorial review defined for the organization, and approving or rejecting it is
+          decided by that workflow — the platform refuses a decision the flow does not allow, which is
+          why the buttons follow the status rather than the other way round.
+        </p>
       </div>
 
       {error ? <ErrorPanel error={error} /> : null}
@@ -105,6 +111,7 @@ export default async function ContentPage({
                 <th>Slug</th>
                 <th>Locale</th>
                 <th>Status</th>
+                <th>Review</th>
                 <th>Published</th>
                 <th>Updated</th>
               </tr>
@@ -116,6 +123,9 @@ export default async function ContentPage({
                   <td>{item.locale}</td>
                   <td>
                     <StatusBadge status={item.status} />
+                  </td>
+                  <td>
+                    <ReviewActions itemId={item.id} status={item.status} />
                   </td>
                   <td className="muted">{formatRelativeTime(item.publishedAt)}</td>
                   <td className="muted">{formatRelativeTime(item.updatedAt)}</td>

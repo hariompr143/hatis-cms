@@ -33,4 +33,22 @@ describe('ErrorPanel', () => {
     render(<ErrorPanel error="something odd" />);
     expect(screen.getByText('something odd')).toBeInTheDocument();
   });
+
+  it('explains a coded error a client component rebuilt from a route handler body', () => {
+    // What a form does after a non-2xx response: a plain Error carrying the platform's
+    // code and reference. The panel must read it the same way it reads an ApiError,
+    // or every refused action in the console reads "Unexpected error".
+    const error = Object.assign(new Error('Content in state PUBLISHED has no review to decide'), {
+      code: 'state_conflict',
+      status: 409,
+      correlationId: 'corr-456',
+    });
+
+    render(<ErrorPanel error={error} />);
+
+    expect(screen.getByText(/not in a state that allows this action/)).toBeInTheDocument();
+    expect(screen.getByText('Content in state PUBLISHED has no review to decide')).toBeInTheDocument();
+    expect(screen.getByText('corr-456')).toBeInTheDocument();
+    expect(screen.queryByText('Unexpected error')).not.toBeInTheDocument();
+  });
 });
