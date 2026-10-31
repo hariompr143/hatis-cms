@@ -209,8 +209,8 @@ class WebhookTransportSocketTest {
      * socket is opened, so a connection here means the delivery reached the wire.
      */
     private static void assertNothingConnected(ServerSocket listener) {
-        listener.setSoTimeout(250);
         try {
+            listener.setSoTimeout(250);
             try (Socket unexpected = listener.accept()) {
                 fail("a connection arrived on port " + listener.getLocalPort()
                         + ", but the delivery should never have reached the wire");
