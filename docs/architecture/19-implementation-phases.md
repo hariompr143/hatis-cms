@@ -49,7 +49,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Container image, Helm chart, Terraform modules | Done | `deploy/`, `terraform/`; image builds and Trivy exits clean at CRITICAL,HIGH (§19.6), including for a finding published after the base image was built, because the runtime stage upgrades the base packages at build time (§19.6) |
 | Architecture boundaries enforced at build time | Done | `HexagonalArchitectureTest` |
 | Console (Next.js): sign-in, projects, content, assets, deployments, domains | Done | `frontend/`; content items are submitted, approved and rejected from the content page, not only through the API; lint, typecheck, 50 tests and `next build` green in CI (§19.6) |
-| CI green end to end | Done | All eight jobs green in run `36711831784` on commit `8d5b39a`: 404 tests across 40 classes, the frontend's lint, typecheck, 50 tests and `next build`, the IaC renders and the image scan. That run is the previous green one (`36180858909` on `b4a01f6`, the same 404) plus the two fixes the image scan needed; the run before that, `35509303723` on `3430eaf`, was green at 266 tests, and the 138 in between are the workflow, notification, analytics and CMS review tests added since. See §19.6. |
+| CI green end to end | Done | All eight jobs green in run `41237628487` on commit `f2ac50c`: 409 tests across 41 classes — the five webhook socket tests are the difference from `36711831784`'s 404/40 — the frontend's lint, typecheck, 50 tests and `next build`, the IaC renders and the image scan. The lineage: `35509303723` on `3430eaf` green at 266, `36180858909` on `b4a01f6` at 404 after the workflow, notification, analytics and CMS review tests, `36711831784` on `8d5b39a` at 404 with a clean scan after the September advisories, this run at 409 after the November wave and the socket tests that found the pin did not pin. See §19.6. |
 | GitHub integration: inbound webhooks and their management | Done | `hatis-integration`; HMAC-verified push receiver plus create/connect/rotate/disconnect, 48 tests |
 | Outbound webhook security core | Done | `hatis-integration`; `WebhookUrlValidator` (SSRF target checks) and `WebhookSigner` (delivery HMAC), 50 tests. Delivery itself is not delivered — see the outbound row below. |
 | Outbound webhook persistence | Done | `WebhookEndpoint` and `WebhookDelivery` map `int_webhook_endpoints` and `int_webhook_deliveries`, including the platform's first PostgreSQL `text[]` column; `V1_014` adds the bookkeeping columns deliveries need. `WebhookEndpointPersistenceIT` round-trips both against PostgreSQL 16 under forced RLS, 9 tests. |
@@ -71,6 +71,7 @@ variables, secrets, logs, basic analytics, RBAC, audit logs, billing, backups.
 | Integration / outbound — open caveats | Delivered end to end: an event published to the outbox is drained per tenant, fanned out to subscribed endpoints, signed, delivered over an SSRF-guarded transport, and retried with backoff. Two caveats are open and stated rather than buried. **(1)** A tenant data-key rotation invalidates endpoint secrets written under the previous key; `dek_id` records which key was used, but nothing re-encrypts yet. **(2)** Both background jobs walk every tenant on a fixed interval, which is the wrong shape at a few thousand organizations: most sweeps run one empty query per organization with no queued work. The replacement is a work-claim table listing only organizations with outstanding work; it is not built. Three further items were open and are now closed. The address pinning that closes the DNS rebinding gap was argued from the code with no test that opens a socket; `WebhookTransportSocketTest` now does, and asserts both halves — a delivery the vetting refuses never reaches the wire (real vetting, real listener, nothing connects), and a delivery that passes reaches the vetted address and no other, because its hostname is `.invalid` and can never resolve. What the test substitutes is only the vetting step, approving a loopback address so a local socket can stand in for a customer's server; `WebhookTransportSocketTest` also pins the control case, where the unmodified transport refuses the same URL and the listener sees nothing. The test earned its keep on its first run: it failed, and in failing found that the shipped pin did not pin — the transport set `HttpClient.remoteAddress` to the vetted address, but Reactor Netty derives the connect address of an absolute URL from the URL host and ignores `remoteAddress` for one, so the name was resolved a second time at connect time and the rebinding window stood open. The pin now lives in a resolver group that answers every lookup with the vetted addresses, fail-closed: `isSupported` accepts everything and `isResolved` claims nothing, so no address can take the already-resolved bypass around it. The seam this needs is one protected method, `WebClientWebhookTransport.resolveVetted`, defaulting to the real vetting and overridden only by tests. `OutboxRelay` used to read `plat_outbox` with no tenant context set — that table carries forced row level security and the migrations explicitly strip `BYPASSRLS` from `hatis_app`, so the query returned an empty list rather than an error, and **no event was ever published** while every metric looked healthy. It is now two beans: `OutboxRelay` walks `plat_tenant_directory`, binds each tenant in turn, and runs a separate unbound pass for platform-wide rows, while `OutboxWork` does the reading and publishing inside that tenant's transaction. The split is the fix, not tidying — Spring applies `@TenantTransactional` through a proxy, so a bean calling its own transactional method gets no transaction and no tenant setting at all, and the only Spring context in this repository wires the datasource and JPA rather than the relay beans, so it would not have caught a self-injected proxy being wrong. `OutboxRelayRlsIT` (11 tests) pins the database behaviour against a real PostgreSQL 16; `OutboxRelayTest` and `OutboxWorkTest` (8 each) pin that work is claimed across a bean boundary and that a failed entry stays queued rather than being marked done. Background jobs could not enumerate tenants from `org_organizations` — it is in the strict tenant list — so `V1_015` adds `plat_tenant_directory` (ids only, no row level security, kept in sync by a trigger). `V1_016` then splits the outbox policy into one policy per command, because `V1_015`'s widened read combined with a strict write left a platform-wide row readable but never publishable, which would have republished it on every sweep forever. |
 | Backups | Documented (`17`); no restore drill has been executed, so the RPO/RTO figures are targets, not results. |
 | OWASP dependency-check | Runs only when an `NVD_API_KEY` secret exists; without one it skips with a notice, because dependency-check cannot fetch the NVD cache inside a job timeout unkeyed. Trivy is the gate that actually fails a build. See §19.6. |
+| Spring Framework 6.2.19 advisories (CVE-2026-47884, CVE-2026-47890, CVE-2026-47892) | Accepted, not fixed: there is no open-source fix on the 6.2 line — Spring lists 6.2.20 as Enterprise Support Only and the fixed open-source line is 7.0.9, which needs Spring Boot 4. Each `.trivyignore` entry names the advisory's prerequisite feature and the grep evidence this tree has none of them. The fix is the Boot 4 migration; until then, if XSLT views, SSE or RouterFunction endpoints enter the codebase, the acceptance is void and the gate goes red again. |
 
 ## 19.3 Phase 2 — Enterprise
 
@@ -96,15 +97,19 @@ customer content into a third-party model without a per-tenant control.
 
 Stated plainly, because a claim of "done" without a named check is worth nothing.
 
-**Verified in GitHub Actions, run `36711831784` on commit `8d5b39a` — all eight jobs
-green, including the image job the previous commit failed:**
+**Verified in GitHub Actions, run `41237628487` on commit `f2ac50c` — all eight jobs
+green, including the image job:**
 
 - **Backend (Java 21 / Spring Boot): success.** 17 modules compile and `mvn verify`
-  completes: **404 tests, 0 failures, 0 errors, 0 skipped** across 40 classes. The count
-  is deliberately unchanged from `36180858909`: this run is that tree plus two image
-  fixes, so a different number would mean something moved that should not have.
-- **Build and scan container image: success**, after the two findings the advisory wave
-  introduced were fixed — one in `app.jar`, one in the base image. Both are below.
+  completes: **409 tests, 0 failures, 0 errors, 0 skipped** across 41 classes — the five
+  webhook socket tests since `36711831784`'s 404/40. The red runs in between are part
+  of the record: `41234263858` failed compiling the first socket test,
+  `41234576807` and `41235518196` failed the pin test until the second one's diagnosis
+  found the pin did not pin, and `41236511039` on `d707f16` was backend-green with the
+  image gate red on the November advisory wave.
+- **Build and scan container image: success**, after eight of the twelve November
+  findings were fixed at the versions the scan names and four Spring Framework
+  advisories were accepted with evidence — both below.
 - **Frontend (Next.js / TypeScript): success, and it ran.** It reported frontend
   changes for a commit that touches only `backend/`, `deploy/` and the workflow file,
   so the reason the filter said so is not established — the detection step's own log
@@ -395,6 +400,26 @@ a single row, which no one can act on. It now prints the whole capture — only 
 CRITICAL/HIGH findings reach that file, so it stays short — and `36711831784` on
 `8d5b39a` was green with the scan included.
 
+**The November wave came two commits later and split the findings into two kinds.**
+Run `41236511039` on `d707f16` — a backend-green commit — failed the image gate on
+twelve findings in `app.jar` and none in the base image, so the runtime upgrade held.
+Eight have fixes published on lines the tree already tracks and were pinned in
+`f2ac50c`: jackson 2.21.6→2.21.7 (four CVEs across jackson-core and jackson-databind),
+jsoup 1.18.1→1.23.2, snappy-java 1.1.10.5→1.1.10.9, and `at.yawk.lz4:lz4-java`
+1.10.1→1.11.4 — which also needed the coordinates corrected, because kafka-clients
+3.9.2 pulls the relocated `at.yawk.lz4` artifact and the old `org.lz4` pin never
+applied to what ships: the scan found 1.10.1 in the jar while the POM claimed 1.8.1.
+The other four are three Spring Framework advisories (CVE-2026-47884, CVE-2026-47890,
+CVE-2026-47892) with no open-source fix on the 6.2 line — Spring's own tables list
+6.2.20 as Enterprise Support Only and the fixed open-source line as 7.0.9, which
+needs Spring Boot 4 — so they are *accepted*, in `.trivyignore`, each entry naming
+the advisory's prerequisite feature and the grep evidence this tree has none of them
+(no XsltView, no SSE, no RouterFunction endpoints) and the removal condition: the
+Boot 4 migration. The scan gate consumes that file explicitly rather than by default
+filename. This is what criterion 4's "no unaccepted critical" means in practice: an
+accepted finding is one whose reason and expiry live in the repository next to the
+code, and one that fails the build the moment its stated prerequisite arrives.
+
 **Inbound webhooks and a constraint worth recording.** `hatis-integration` now receives
 GitHub push deliveries: the signature is verified over the raw body before anything is
 parsed, the delivery is audited, and a platform event is published. Implementing it
@@ -486,12 +511,12 @@ A phase is done when all of these are true, not when the code is written:
 
 | # | Criterion | Evidence |
 | --- | --- | --- |
-| 1 | `mvn verify` green in CI, named by run id | Run `36711831784` on `8d5b39a`: all 17 modules compile, **404 tests, 0 failures, 0 errors, 0 skipped** across 40 classes. Every run publishes the per-class table as a commit comment, so the count is checkable rather than asserted. |
+| 1 | `mvn verify` green in CI, named by run id | Run `41237628487` on `f2ac50c`: all 17 modules compile, **409 tests, 0 failures, 0 errors, 0 skipped** across 41 classes. Every run publishes the per-class table as a commit comment, so the count is checkable rather than asserted. |
 | 2 | Tenant isolation against a real database | `TenantIsolationIT` (9 tests) applies the migrations to PostgreSQL 16 and asserts, under forced row level security, that one tenant sees nothing of another's — including the stricter predicates added at `V1_015`/`V1_016`; `OutboxRelayRlsIT` (11 tests) does the same for the outbox policies. Both are inside criterion 1's 404. |
 | 3 | Helm chart renders for staging and production | The IaC job runs `helm lint --strict`, renders production, staging **and** an email-enabled production (the branch production values do not exercise), asserts the SMTP password reaches the container, and asserts the notification guard refuses a half-configured channel; it also runs `terraform validate` for both modules. |
-| 4 | Image builds, and its scan has no unaccepted critical | The image job builds `deploy/docker/Dockerfile.platform`, saves it, and scans it with Trivy at `severity: CRITICAL,HIGH` with `ignore-unfixed: true` and `exit-code: 1`. There is no `.trivyignore` in the tree, so a finding fails the build rather than being accepted quietly — which is how the two September advisories were caught and fixed (`8d5b39a`), with the run above green over both. |
+| 4 | Image builds, and its scan has no unaccepted critical | The image job builds `deploy/docker/Dockerfile.platform`, saves it, and scans it with Trivy at `severity: CRITICAL,HIGH` with `ignore-unfixed: true` and `exit-code: 1`. Findings fail the build unless they are accepted in `.trivyignore`, where every entry carries its evidence and its removal condition. The file's only entries are the four Spring Framework findings that have no open-source fix on the 6.2 line; the eight November findings were fixed rather than accepted (`f2ac50c`), as the two September ones were (`8d5b39a`). An accepted finding is therefore never quiet: its reason, its reachability evidence and the change that un-accepts it are all reviewable in the tree. |
 | 5 | Applicable §17.6 failure cases exercised | **Exercised:** worker fleet down — `OutboxWorkTest` pins that a sink failure backs the entry off instead of marking it published, `OutboxRelayTest` that one failing tenant or entry does not stop the sweep, `OutboxEntryPersistenceIT` that a backed-off entry is not claimed until due and a published one is never claimed again, which is what "rows accumulate and are relayed when workers return" means in practice. Secret manager unavailable — the delivery paths fail rather than pretend: `aChannelWithoutASenderFails`, `aRefusedDeliveryIsRecordedNotThrown`, `anUndecryptableSecretSkipsTheDelivery`. **Configuration, validated as configuration:** pod crash — `server.shutdown: graceful` with a 30-second timeout per phase, tini as PID 1 and the probes in `_container.tpl` are rendered and linted, but no live restart is performed from here. **Not reachable from this repository:** node loss, zone loss, region failover, PostgreSQL PITR and object-storage replication need a running multi-zone estate; multi-region disaster recovery is Phase 2 by §19.3, and the missing restore drill is stated in §19.2 rather than hidden. |
-| 6 | Documents match what was built | This file: every §19.2 row carries its evidence, §19.6 names the runs and the counts, and the three deliveries after the previous documentation pass — console review actions (`9936b02`), the email/alert configuration (`3c8b7f8`) and the image-scan fixes (`8d5b39a`) — are described as delivered with the checks that show it. §18's repository structure and §04's worker and configuration tables were updated with the same work. |
+| 6 | Documents match what was built | This file: every §19.2 row carries its evidence, §19.6 names the runs and the counts, and the three deliveries after the previous documentation pass — console review actions (`9936b02`), the email/alert configuration (`3c8b7f8`) and the image-scan fixes (`8d5b39a`), the webhook socket tests and the resolver pin they forced (`b981db0` through `d707f16`), and the November wave response (`f2ac50c`) — are described as delivered with the checks that show it. §18's repository structure and §04's worker and configuration tables were updated with the same work. |
 | 7 | Nothing is a placeholder, a TODO, or a stub that returns success | A scan of `backend/*/src/main` and `frontend/src` finds no `TODO`, `FIXME`, `UnsupportedOperationException` or "not implemented" marker — the only textual hit for "placeholder" is an input's HTML attribute in `ReviewActions`. The two tables with no mapper, `anl_data_sources` and `anl_datasets`, carry their reason in §19.2 instead of a connector that invents rows, and the EMAIL channel is absent rather than fake when it is disabled. The static checks in CI exist because this class of defect reached a green build twice: `EmailChannelSender` implementing an interface it had not imported, and two modules checking permission codes the catalogue did not define. |
 
 The commit that carries this table — `b2f710c`, documentation only — was green too
