@@ -48,11 +48,14 @@ import java.util.List;
  *
  * <h2>What is and is not verified</h2>
  *
- * The address vetting this class relies on is covered by
- * {@code WebhookUrlValidatorTest}. The pinning itself is a connection-level property that
- * no test in this repository exercises, because none of them opens a real socket; it is
- * asserted here by construction, not by a passing test, and that distinction should not be
- * papered over.
+ * The address vetting is covered by {@code WebhookUrlValidatorTest}, and the pinning
+ * itself by {@code WebhookTransportSocketTest}, which opens real sockets. It proves the
+ * two properties that matter: a delivery the vetting refuses never reaches the wire, and
+ * a delivery that passes reaches the vetted address and no other — the test's hostname is
+ * {@code .invalid} and can never resolve, so a connection that arrived at all cannot have
+ * gone through a second DNS lookup. What that test substitutes is only the vetting step,
+ * approving a loopback address the real vetting would refuse so a local socket can stand
+ * in for a customer's server; the refusal side runs against the real vetting.
  */
 @Component
 public class WebClientWebhookTransport implements WebhookTransport {
@@ -70,7 +73,7 @@ public class WebClientWebhookTransport implements WebhookTransport {
 
         List<InetAddress> vetted;
         try {
-            vetted = WebhookUrlValidator.resolveDeliverable(request.url());
+            vetted = resolveVetted(request.url());
         } catch (PlatformExceptions.BusinessRuleViolation e) {
             // Permanent: the same refusal will come back until the URL changes, so the
             // dispatcher records a skipped delivery instead of a retryable failure.
@@ -117,6 +120,20 @@ public class WebClientWebhookTransport implements WebhookTransport {
             log.debug("Webhook delivery to {} failed: {}", uri.getHost(), e.getClass().getSimpleName());
             return Outcome.unreachable(e.getClass().getSimpleName());
         }
+    }
+
+    /**
+     * Resolves the destination once and vets every address that lookup returned.
+     *
+     * <p>A seam rather than a direct call to {@link WebhookUrlValidator#resolveDeliverable}
+     * for one reason only: {@code WebhookTransportSocketTest} has to point the delivery at
+     * a socket it owns to observe where the connection lands, and the real vetting would
+     * rightly refuse a local socket. Production never overrides this; the default below
+     * <em>is</em> the production behaviour, and the tests that exercise the real vetting
+     * call the real default through this same method.
+     */
+    protected List<InetAddress> resolveVetted(String url) {
+        return WebhookUrlValidator.resolveDeliverable(url);
     }
 
     private static int portOf(URI uri) {

@@ -32,8 +32,9 @@ import java.util.regex.Pattern;
  * are two lookups, and a hostile authoritative server can return a public address first
  * and an internal one second — a DNS rebinding attack. Closing it properly means
  * resolving once and connecting to that pinned address with the original Host header,
- * which is a transport concern; {@code WebhookHttpSender} is where that has to happen.
- * This class is the first line, not the whole defence.
+ * which is a transport concern; {@code WebClientWebhookTransport} is where that happens,
+ * and {@code WebhookTransportSocketTest} is where it is shown to. This class is the first
+ * line, not the whole defence.
  */
 public final class WebhookUrlValidator {
 
