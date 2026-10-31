@@ -51,7 +51,14 @@
       risk this avoids.
     -->
     <spring-boot.version>3.5.14</spring-boot.version>
-    <!-- CVE-2025-41249, CVE-2026-41850, CVE-2026-41842, CVE-2026-41845 -->
+    <!-- CVE-2025-41249, CVE-2026-41850, CVE-2026-41842, CVE-2026-41845, and now
+         CVE-2026-47884 (XsltView SSRF/RCE), CVE-2026-47890 (SSE stream corruption
+         with view fragments), CVE-2026-47892 (WebFlux functional-endpoint header
+         predicate bypass). The three new ones have no open-source fix on the 6.2
+         line: Spring publishes 6.2.20 for Enterprise Support only, and the fixed
+         open-source line is 7.0.9, which needs Spring Boot 4. They are accepted in
+         .trivyignore with the reachability evidence, and the Boot 4 migration is
+         the tracked fix - see docs/architecture/19 §19.2/§19.6. -->
     <spring-framework.version>6.2.19</spring-framework.version>
     <!-- CVE-2026-22732 (critical), CVE-2025-22228 -->
     <spring-security.version>6.5.9</spring-security.version>
@@ -68,25 +75,41 @@
     <tomcat.version>10.1.60</tomcat.version>
     <!-- CVE-2026-75595 (critical), CVE-2026-42583, CVE-2026-42579, CVE-2026-42587 -->
     <netty.version>4.1.137.Final</netty.version>
-    <!-- GHSA-r7wm-3cxj-wff9, CVE-2026-54512, and CVE-2026-68497 (HIGH, DoS via
-         unbounded numeric parsing). The advisory for CVE-2026-68497 names 2.18.10,
-         2.21.6 and 2.22.2; 2.21.6 is the smallest bump that clears it on the line the
-         BOM already tracks, so every Jackson module moves together and the annotations
-         artifact stays at 2.21, as Jackson versions it separately. -->
-    <jackson-bom.version>2.21.6</jackson-bom.version>
+    <!-- GHSA-r7wm-3cxj-wff9, CVE-2026-54512, CVE-2026-68497 (HIGH, DoS via
+         unbounded numeric parsing), and now CVE-2026-89407, CVE-2026-89425
+         (jackson-core, DoS via regex backtracking and unbounded StringBuilder
+         growth) and CVE-2026-91776, CVE-2026-91777 (jackson-databind, DoS via
+         unbounded cache growth and quadratic forward-reference completion).
+         The new four name 2.18.11, 2.21.7 and 2.22.3; 2.21.7 is the smallest
+         bump that clears them on the line the BOM already tracks, so every
+         Jackson module moves together and the annotations artifact stays at
+         2.21, as Jackson versions it separately. -->
+    <jackson-bom.version>2.21.7</jackson-bom.version>
     <!-- CVE-2026-40983, CVE-2026-40984 -->
     <micrometer.version>1.15.12</micrometer.version>
     <!-- CVE-2026-35554 -->
     <kafka.version>3.9.2</kafka.version>
-    <!-- CVE-2025-12183, pulled in through kafka-clients -->
-    <lz4-java.version>1.8.1</lz4-java.version>
+    <!-- CVE-2025-12183 and CVE-2026-106451 (arbitrary code execution via insecure
+         temporary file handling), pulled in through kafka-clients. kafka-clients
+         3.9.2 depends on the relocated at.yawk.lz4 coordinates, so the old
+         org.lz4 override never applied to what actually ships - the image scan
+         found at.yawk.lz4:lz4-java 1.10.1 in the jar while this pin said 1.8.1.
+         The managed entry below now targets the coordinates kafka uses. -->
+    <lz4-java.version>1.11.4</lz4-java.version>
+    <!-- CVE-2026-108106 (DoS via unbounded memory allocation during
+         decompression) and CVE-2026-93451 (buffer overflow via malformed
+         compressed input), also pulled in through kafka-clients. -->
+    <snappy-java.version>1.1.10.9</snappy-java.version>
     <!-- CVE-2025-49146, CVE-2026-42198, CVE-2026-54291 -->
     <postgresql.version>42.7.12</postgresql.version>
 
     <awssdk.version>2.28.16</awssdk.version>
     <testcontainers.version>1.20.3</testcontainers.version>
     <springdoc.version>2.8.9</springdoc.version>
-    <jsoup.version>1.18.1</jsoup.version>
+    <!-- CVE-2026-75140 (DoS via deeply nested XML documents); 1.23.2 is the
+         smallest version the advisory names past it. RichTextSanitizerTest and
+         ContentBodyValidatorTest cover the jsoup API this tree touches. -->
+    <jsoup.version>1.23.2</jsoup.version>
     <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
     <maven-surefire-plugin.version>3.2.5</maven-surefire-plugin.version>
     <maven-failsafe-plugin.version>3.2.5</maven-failsafe-plugin.version>
@@ -185,9 +208,14 @@
         <version>${kafka.version}</version>
       </dependency>
       <dependency>
-        <groupId>org.lz4</groupId>
+        <groupId>at.yawk.lz4</groupId>
         <artifactId>lz4-java</artifactId>
         <version>${lz4-java.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.xerial.snappy</groupId>
+        <artifactId>snappy-java</artifactId>
+        <version>${snappy-java.version}</version>
       </dependency>
       <dependency>
         <groupId>org.postgresql</groupId>

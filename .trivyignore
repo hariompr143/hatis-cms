@@ -1,0 +1,30 @@
+# Accepted image-scan findings. Each entry names why it is accepted and what
+# removes it. An entry with no reason does not belong in this file.
+
+# Spring Framework 6.2.19 - three advisories published 2026-08-20. There is no
+# open-source fix on the 6.2 line: Spring's own advisories list 6.2.20 as
+# Enterprise Support Only, and the fixed open-source version is 7.0.9, which
+# requires Spring Boot 4 (Framework 7, Tomcat 11). Boot 3.5 is the supported
+# platform of this tree and a Boot 4 migration is tracked as open work in
+# docs/architecture/19-implementation-phases.md §19.2 and §19.6.
+#
+# Reachability evidence, checked in this tree (backend/*/src/main):
+#   CVE-2026-47884 (spring-webmvc, XsltView SSRF/RCE, needs XsltView and an
+#     "/**" mapping that falls through to view rendering): no XsltView, no
+#     TransformerFactory, no .xsl anywhere; every controller is a
+#     @RestController answering JSON. Not reachable.
+#   CVE-2026-47890 (spring-webmvc + spring-webflux, SSE stream corruption with
+#     view fragments, needs Server-Sent Events carrying view fragments): no SSE
+#     - no ServerSentEvent, no text/event-stream, no SseEmitter. Not reachable.
+#   CVE-2026-47892 (spring-webflux, header predicate bypass in functional
+#     endpoints, needs RouterFunction-style endpoints guarded by header
+#     predicates): no RouterFunction anywhere; WebFlux is present only for
+#     WebClient in the webhook transport, which carries no endpoint routing.
+#     Not reachable.
+#
+# These three entries are REMOVED when the tree runs on Spring Boot 4 /
+# Framework 7.0.9 or later. If any of the three features above ever enters the
+# codebase before that migration, this file is wrong and the finding is live.
+CVE-2026-47884
+CVE-2026-47890
+CVE-2026-47892

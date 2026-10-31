@@ -530,6 +530,10 @@ jobs:
           exit-code: "1"
           severity: CRITICAL,HIGH
           ignore-unfixed: true
+          # The accepted-findings file, in the repository root. Everything not
+          # listed there fails this gate; everything listed there carries its
+          # evidence and its removal condition in that file.
+          trivyignores: .trivyignore
 
       - name: Generate SBOM
         uses: aquasecurity/trivy-action@v0.36.0
