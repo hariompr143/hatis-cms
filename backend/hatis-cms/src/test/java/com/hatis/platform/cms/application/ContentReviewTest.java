@@ -271,6 +271,7 @@ class ContentReviewTest {
         return new WorkflowService.InstanceDetail(
                 new WorkflowService.InstanceSummary(instanceId, ContentService.REVIEW_SUBJECT_TYPE, itemId,
                         currentState, "RUNNING", 1, null, null, null),
-                WorkflowService.DEFAULT_DEFINITION_KEY, 1, null, List.of(), List.of(), List.of());
+                WorkflowService.DEFAULT_DEFINITION_KEY, 1, null, List.of(), List.of(), List.of(),
+                List.of());
     }
 }
