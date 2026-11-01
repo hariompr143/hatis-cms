@@ -14,10 +14,12 @@ import com.hatis.platform.shared.tenant.TenantContextHolder;
 import com.hatis.platform.shared.tenant.TenantTransactional;
 import com.hatis.platform.workflow.adapter.persistence.WorkflowHistoryStore;
 import com.hatis.platform.workflow.adapter.persistence.WorkflowRepositories;
+import com.hatis.platform.workflow.adapter.persistence.WorkflowSignOffStore;
 import com.hatis.platform.workflow.domain.WorkflowDefinition;
 import com.hatis.platform.workflow.domain.WorkflowDefinitionSpec;
 import com.hatis.platform.workflow.domain.WorkflowHistoryEntry;
 import com.hatis.platform.workflow.domain.WorkflowInstance;
+import com.hatis.platform.workflow.domain.WorkflowSignOffEntry;
 import com.hatis.platform.workflow.domain.WorkflowTask;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -53,6 +55,21 @@ import java.util.UUID;
  * with the required role named, because "who tried and could not" is the half of an approval
  * trail that gets asked about after an incident.
  *
+ * <h2>Two Phase 2 rules layered on top</h2>
+ *
+ * A parallel gate ({@code approvals} on a transition) splits a move into N sign-offs: each
+ * permitted principal records one approval, the tasks at the state stay open while the gate
+ * fills, and the Nth distinct sign-off is the one that moves the instance. The same
+ * principal signing twice is refused rather than counted, because a gate of two approvals
+ * that one person can satisfy alone is not a gate.
+ *
+ * An escalation holder may act on the state they were pulled in to resolve: an open
+ * escalation task at the current state permits its assignee to take <em>any</em> transition
+ * from that state, even one the definition assigns to somebody else. The alternative —
+ * notifying a manager who then cannot touch the stuck approval — is an escalation that only
+ * produces sympathy. Their move is recorded as theirs, and the assignee's task is closed
+ * with them as the one who completed it.
+ *
  * <h2>Scope</h2>
  *
  * {@code wf_instances} has no project column, so authorisation is organization-scoped here.
@@ -87,6 +104,7 @@ public class WorkflowService {
     private final WorkflowRepositories.TaskRepository tasks;
     private final WorkflowDefinitionParser parser;
     private final WorkflowHistoryStore history;
+    private final WorkflowSignOffStore signOffs;
     private final AuthorizationService authorization;
     private final NotificationService notifications;
     private final EventPublisher events;
@@ -97,6 +115,7 @@ public class WorkflowService {
                            WorkflowRepositories.TaskRepository tasks,
                            WorkflowDefinitionParser parser,
                            WorkflowHistoryStore history,
+                           WorkflowSignOffStore signOffs,
                            AuthorizationService authorization,
                            NotificationService notifications,
                            EventPublisher events,
@@ -106,6 +125,7 @@ public class WorkflowService {
         this.tasks = tasks;
         this.parser = parser;
         this.history = history;
+        this.signOffs = signOffs;
         this.authorization = authorization;
         this.notifications = notifications;
         this.events = events;
@@ -160,8 +180,11 @@ public class WorkflowService {
 
         // One running instance per subject. Without this, a retried submit or an impatient
         // double click forks one approval into two queues that can disagree about the answer.
-        instances.findFirstByOrganizationIdAndSubjectTypeAndSubjectIdAndStatus(
-                        organizationId, subjectType, command.subjectId(), WorkflowInstance.Status.RUNNING)
+        // A stuck instance counts: it is unfinished work, and the escalation holder is about
+        // to resolve it.
+        instances.findFirstByOrganizationIdAndSubjectTypeAndSubjectIdAndStatusIn(
+                        organizationId, subjectType, command.subjectId(),
+                        List.of(WorkflowInstance.Status.RUNNING, WorkflowInstance.Status.STUCK))
                 .ifPresent(existing -> {
                     throw new PlatformExceptions.AlreadyExists(
                             "A workflow is already running for this " + subjectType);
@@ -231,19 +254,37 @@ public class WorkflowService {
                 .orElseThrow(() -> new PlatformExceptions.StateConflict(
                         "No transition '" + action + "' leaves state '" + currentState + "'"));
 
-        if (!transition.assignee().permits(actorId,
-                authorization.rolesAt(ScopeType.ORGANIZATION, organizationId))) {
+        List<String> roleCodes = authorization.rolesAt(ScopeType.ORGANIZATION, organizationId);
+        List<WorkflowTask> openAtState = openTasks(organizationId, instance).stream()
+                .filter(task -> currentState.equals(task.getState()))
+                .toList();
+        if (!transition.assignee().permits(actorId, roleCodes)
+                && !escalationTakeover(openAtState, actorId, roleCodes)) {
             audit.record(AuditRecord.builder("workflow.transition.denied")
                     .resource("workflow_instance", instance.getId())
                     .result(AuditRecord.Result.DENIED)
                     .reason("'" + action + "' is assigned to " + describe(transition.assignee()))
                     .build());
             throw new PlatformExceptions.Forbidden(
-                    "'" + action + "' is assigned to " + describe(transition.assignee()));
+                    "'" + action + "' is assigned to " + describe(transition.assignee())
+                            + "; an escalated task at this state may be taken over by its"
+                            + " escalation assignee");
+        }
+
+        if (transition.approvals() > 1) {
+            int collected = recordSignOff(organizationId, instance, definition, transition,
+                    actorId, command.comment());
+            if (collected < transition.approvals()) {
+                // The gate is not satisfied: the instance stays where it is and the tasks
+                // stay open, because the state still needs the remaining approvals.
+                return detail(instance, definition, spec, organizationId);
+            }
+            // The Nth distinct approval is the move. Its comment is the transition comment.
         }
 
         String fromState = currentState;
-        closeTasksAt(organizationId, instance, transition.assignee(), actorId, command.comment());
+        closeTasksAt(organizationId, instance, transition.assignee(), actorId,
+                command.comment(), roleCodes);
 
         boolean terminal = spec.isTerminal(transition.to());
         instance.advanceTo(transition.to(), terminal
@@ -446,25 +487,87 @@ public class WorkflowService {
     }
 
     /**
-     * Completes the acting assignee's task and cancels the others waiting at that state.
+     * Completes the acting assignee's task — and any escalation task the actor holds —
+     * then cancels the others waiting at that state.
      *
      * <p>Leaving the others open would put work in somebody's queue that can no longer be done,
-     * which is how a task list stops being trusted.
+     * which is how a task list stops being trusted. An escalation task is <em>completed</em>
+     * when its holder resolves the state, not cancelled: they were pulled in to do exactly
+     * this, and the record should say so.
      */
     private void closeTasksAt(UUID organizationId, WorkflowInstance instance,
-                              WorkflowDefinitionSpec.Assignee acting, UUID actorId, String comment) {
+                              WorkflowDefinitionSpec.Assignee acting, UUID actorId, String comment,
+                              List<String> roleCodes) {
         for (WorkflowTask task : openTasks(organizationId, instance)) {
             if (!instance.getCurrentState().equals(task.getState())) {
                 continue;
             }
-            if (task.getAssigneeType() == acting.type()
-                    && Objects.equals(task.getAssigneeId(), acting.id())) {
+            boolean byTheAssignee = task.getAssigneeType() == acting.type()
+                    && Objects.equals(task.getAssigneeId(), acting.id());
+            boolean byTakeover = task.isEscalation()
+                    && task.getAssignee().permits(actorId, roleCodes);
+            if (byTheAssignee || byTakeover) {
                 task.complete(actorId, comment);
             } else {
                 task.cancel();
             }
             tasks.save(task);
         }
+    }
+
+    /**
+     * Whether an open escalation task at this state lets the actor resolve it.
+     *
+     * <p>Narrow on purpose: only an escalation task widens the assignee's permission. A
+     * second task at the state belonging to another transition's assignee does not — that
+     * assignee may take their action, not this one.
+     */
+    private static boolean escalationTakeover(List<WorkflowTask> openAtState, UUID actorId,
+                                              List<String> roleCodes) {
+        return openAtState.stream()
+                .filter(WorkflowTask::isEscalation)
+                .anyMatch(task -> task.getAssignee().permits(actorId, roleCodes));
+    }
+
+    /**
+     * Records one approval for a parallel gate and returns how many the gate now holds.
+     *
+     * <p>Every sign-off is a history entry and an event in its own right: "who approved" is
+     * asked per approver, and a gate that only publishes its completion would answer it for
+     * the last signer and lose the rest.
+     */
+    private int recordSignOff(UUID organizationId, WorkflowInstance instance,
+                              WorkflowDefinition definition, WorkflowDefinitionSpec.Transition transition,
+                              UUID actorId, String comment) {
+        String state = instance.getCurrentState();
+        String action = transition.action();
+        List<WorkflowSignOffEntry> collected =
+                signOffs.findForGate(organizationId, instance.getId(), state, action);
+        if (collected.stream().anyMatch(signOff -> signOff.actorId().equals(actorId))) {
+            throw new PlatformExceptions.StateConflict(
+                    "you have already signed off on '" + action + "'; a gate of "
+                            + transition.approvals() + " approvals counts each principal once");
+        }
+        signOffs.record(organizationId, instance.getId(), state, action, actorId, comment);
+        int count = collected.size() + 1;
+
+        history.append(organizationId, instance.getId(), state, state, action, actorId,
+                "approval " + count + " of " + transition.approvals() + " recorded");
+
+        Map<String, Object> data = eventData(instance, definition, action);
+        data.put("approvalsCollected", count);
+        data.put("approvalsRequired", transition.approvals());
+        events.publish(PlatformEvent.of("workflow.approval.recorded", organizationId)
+                .resource("workflow_instance", instance.getId())
+                .data(data)
+                .build());
+        audit.record(AuditRecord.builder("workflow.approval.recorded")
+                .resource("workflow_instance", instance.getId())
+                .metadata(Map.of("action", action,
+                        "collected", String.valueOf(count),
+                        "required", String.valueOf(transition.approvals())))
+                .build());
+        return count;
     }
 
     private List<WorkflowTask> openTasks(UUID organizationId, WorkflowInstance instance) {
@@ -475,12 +578,7 @@ public class WorkflowService {
     /** The earliest SLA among the transitions leaving {@code state} for this assignee. */
     private static Instant dueAtFor(WorkflowDefinitionSpec spec, String state,
                                     WorkflowDefinitionSpec.Assignee assignee) {
-        Integer hours = spec.transitionsFrom(state).stream()
-                .filter(transition -> transition.assignee().equals(assignee))
-                .map(WorkflowDefinitionSpec.Transition::slaHours)
-                .filter(Objects::nonNull)
-                .min(Integer::compareTo)
-                .orElse(null);
+        Integer hours = spec.minSlaHours(state, assignee);
         return hours == null ? null : Instant.now().plus(Duration.ofHours(hours));
     }
 
@@ -510,9 +608,21 @@ public class WorkflowService {
                         .map(WorkflowDefinitionSpec.Transition::action)
                         .toList()
                 : List.of();
+        List<GateView> gates = instance.isRunning()
+                ? spec.transitionsFrom(instance.getCurrentState()).stream()
+                        .filter(transition -> transition.approvals() > 1)
+                        .map(transition -> new GateView(transition.action(), transition.approvals(),
+                                signOffs.findForGate(organizationId, instance.getId(),
+                                                instance.getCurrentState(), transition.action())
+                                        .stream()
+                                        .map(signOff -> new SignOffView(signOff.actorId(),
+                                                signOff.comment(), signOff.signedAt()))
+                                        .toList()))
+                        .toList()
+                : List.of();
         return new InstanceDetail(toSummary(instance), definition.getKey(), definition.getVersion(),
                 spec, instanceTasks.stream().map(this::toTaskView).toList(),
-                history.findByInstance(organizationId, instance.getId()), actions);
+                history.findByInstance(organizationId, instance.getId()), actions, gates);
     }
 
     private DefinitionView toDefinitionView(WorkflowDefinition definition) {
@@ -531,10 +641,10 @@ public class WorkflowService {
         return new TaskView(task.getId(), task.getInstanceId(), task.getState(),
                 task.getAssigneeType().name(), task.getAssigneeId(), task.getStatus().name(),
                 task.getDueAt(), task.isOverdue(Instant.now()), task.getCompletedBy(),
-                task.getComment(), task.getCreatedAt());
+                task.getComment(), task.getCreatedAt(), task.isEscalation(), task.getEscalatedAt());
     }
 
-    private static String describe(WorkflowDefinitionSpec.Assignee assignee) {
+    static String describe(WorkflowDefinitionSpec.Assignee assignee) {
         return switch (assignee.type()) {
             case ANY -> "anyone holding the transition permission";
             case USER -> "one named user";
@@ -552,7 +662,7 @@ public class WorkflowService {
      * the rejection actually finishes the instance — either because the target state has no
      * outgoing transition, or because the transition declares {@code "outcome": "REJECTED"}.
      */
-    private static String eventTypeFor(WorkflowInstance instance) {
+    static String eventTypeFor(WorkflowInstance instance) {
         return switch (instance.getStatus()) {
             case COMPLETED -> "workflow.instance.completed";
             case REJECTED -> "workflow.instance.rejected";
@@ -561,8 +671,8 @@ public class WorkflowService {
         };
     }
 
-    private static Map<String, Object> eventData(WorkflowInstance instance, WorkflowDefinition definition,
-                                                 String action) {
+    static Map<String, Object> eventData(WorkflowInstance instance, WorkflowDefinition definition,
+                                         String action) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("definition", definition.getKey());
         data.put("definitionVersion", definition.getVersion());
@@ -596,11 +706,24 @@ public class WorkflowService {
 
     public record TaskView(UUID id, UUID instanceId, String state, String assigneeType, String assigneeId,
                            String status, Instant dueAt, boolean overdue, UUID completedBy,
-                           String comment, Instant createdAt) {
+                           String comment, Instant createdAt, boolean escalation, Instant escalatedAt) {
+    }
+
+    /**
+     * One parallel gate at the instance's current state.
+     *
+     * @param required how many distinct principals must sign off before the action fires
+     * @param signOffs the approvals recorded so far, oldest first
+     */
+    public record GateView(String action, int required, List<SignOffView> signOffs) {
+    }
+
+    public record SignOffView(UUID actorId, String comment, Instant signedAt) {
     }
 
     public record InstanceDetail(InstanceSummary instance, String definitionKey, int definitionVersion,
                                  WorkflowDefinitionSpec definition, List<TaskView> tasks,
-                                 List<WorkflowHistoryEntry> history, List<String> availableActions) {
+                                 List<WorkflowHistoryEntry> history, List<String> availableActions,
+                                 List<GateView> gates) {
     }
 }

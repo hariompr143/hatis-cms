@@ -24,7 +24,7 @@ import java.util.Optional;
  * would run a workflow that is not the one the customer configured:
  *
  * <ul>
- *   <li>{@code guard} — the engine evaluates no conditions in Phase 1.</li>
+ *   <li>{@code guard} — the engine evaluates no conditions.</li>
  *   <li>any unknown key inside a transition, which is almost always a typo of a key the
  *       engine reads ({@code assigne}, {@code requiredRoles}), and a typo that is ignored
  *       changes who may approve.</li>
@@ -40,7 +40,8 @@ import java.util.Optional;
 public class WorkflowDefinitionParser {
 
     private static final List<String> TRANSITION_KEYS =
-            List.of("from", "to", "action", "assignee", "requiredRole", "slaHours", "outcome");
+            List.of("from", "to", "action", "assignee", "requiredRole", "slaHours", "outcome",
+                    "approvals", "autoAfterHours", "escalateTo");
 
     private final ObjectMapper mapper;
 
@@ -111,8 +112,27 @@ public class WorkflowDefinitionParser {
         WorkflowDefinitionSpec.Outcome outcome = text(node, "outcome")
                 .map(WorkflowDefinitionParser::parseOutcome)
                 .orElse(null);
+        Integer approvals = node.hasNonNull("approvals") ? node.get("approvals").asInt() : null;
+        Integer autoAfterHours = node.hasNonNull("autoAfterHours")
+                ? node.get("autoAfterHours").asInt() : null;
+        WorkflowDefinitionSpec.Assignee escalateTo = parseEscalation(node);
 
-        return new WorkflowDefinitionSpec.Transition(from, to, action, assignee, slaHours, outcome);
+        return new WorkflowDefinitionSpec.Transition(from, to, action, assignee, slaHours, outcome,
+                approvals, autoAfterHours, escalateTo);
+    }
+
+    /**
+     * The {@code escalateTo} destination, if declared.
+     *
+     * <p>Parsed by the same rules as {@code assignee} minus the legacy alias and minus
+     * defaulting to anyone: an escalation that names nobody would go nowhere.
+     */
+    private WorkflowDefinitionSpec.Assignee parseEscalation(JsonNode node) {
+        JsonNode escalateTo = node.get("escalateTo");
+        if (escalateTo == null || escalateTo.isNull()) {
+            return null;
+        }
+        return parseAssigneeObject("'escalateTo'", escalateTo);
     }
 
     private WorkflowDefinitionSpec.Assignee parseAssignee(JsonNode node) {
@@ -128,15 +148,20 @@ public class WorkflowDefinitionParser {
         if (assignee == null || assignee.isNull()) {
             return WorkflowDefinitionSpec.Assignee.anyone();
         }
+        return parseAssigneeObject("'assignee'", assignee);
+    }
+
+    private WorkflowDefinitionSpec.Assignee parseAssigneeObject(String fieldLabel, JsonNode assignee) {
         if (!assignee.isObject()) {
-            throw invalid("'assignee' must be an object with 'type' and, unless the type is ANY, 'id'");
+            throw invalid(fieldLabel + " must be an object with 'type' and, unless the type is ANY, 'id'");
         }
         assignee.fieldNames().forEachRemaining(name -> {
             if (!List.of("type", "id").contains(name)) {
-                throw invalid("unknown key '" + name + "' on an assignee");
+                throw invalid("unknown key '" + name + "' on " + fieldLabel);
             }
         });
-        String type = text(assignee, "type").orElseThrow(() -> invalid("an assignee is missing 'type'"));
+        String type = text(assignee, "type")
+                .orElseThrow(() -> invalid(fieldLabel + " is missing 'type'"));
         String id = text(assignee, "id").orElse(null);
         return new WorkflowDefinitionSpec.Assignee(parseAssigneeType(type), id);
     }

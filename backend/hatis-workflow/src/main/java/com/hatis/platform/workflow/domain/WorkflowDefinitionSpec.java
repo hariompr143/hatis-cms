@@ -73,6 +73,7 @@ public record WorkflowDefinitionSpec(
         }
 
         Set<String> actions = new LinkedHashSet<>();
+        Set<String> timedStates = new LinkedHashSet<>();
         for (Transition transition : transitions) {
             if (!declared.contains(transition.from())) {
                 throw invalid("transition '" + transition.action() + "' starts at unknown state '"
@@ -87,6 +88,14 @@ public record WorkflowDefinitionSpec(
             if (!actions.add(transition.from() + '\u0000' + transition.action())) {
                 throw invalid("action '" + transition.action() + "' is declared twice from state '"
                         + transition.from() + "', so the result would depend on declaration order");
+            }
+            // The same reason, for the clock: two scheduled transitions leaving one state
+            // would make "which one fires at the deadline" a declaration-order question.
+            if (transition.autoAfterHours() != null
+                    && !timedStates.add(transition.from())) {
+                throw invalid("state '" + transition.from() + "' declares more than one scheduled"
+                        + " transition (autoAfterHours), so which one fires would depend on"
+                        + " declaration order");
             }
         }
 
@@ -133,12 +142,41 @@ public record WorkflowDefinitionSpec(
     }
 
     /**
+     * The earliest SLA among the transitions leaving {@code state} for this assignee.
+     *
+     * <p>{@code null} when none of them declares one: a deadline cannot be invented from a
+     * definition that chose not to set one.
+     */
+    public Integer minSlaHours(String state, Assignee assignee) {
+        return transitionsFrom(state).stream()
+                .filter(transition -> transition.assignee().equals(assignee))
+                .map(Transition::slaHours)
+                .filter(hours -> hours != null)
+                .min(Integer::compareTo)
+                .orElse(null);
+    }
+
+    /** The transition leaving {@code state} that the clock fires, if one is declared. */
+    public Optional<Transition> scheduledFrom(String state) {
+        return transitionsFrom(state).stream()
+                .filter(transition -> transition.autoAfterHours() != null)
+                .findFirst();
+    }
+
+    /**
      * A single edge: from {@code from} to {@code to} on {@code action}.
      *
      * @param assignee who may take this action
      * @param slaHours optional time budget for the resulting task; {@code null} means no due date
      * @param outcome  how the instance ends when {@code to} is terminal; {@code null} means
      *                 {@link Outcome#COMPLETED}
+     * @param approvals how many distinct principals must sign off before the action fires;
+     *                  {@code null} means 1 — an ordinary transition, no gate
+     * @param autoAfterHours when present, the clock fires this transition this many hours
+     *                       after the instance arrives at {@code from}; {@code null} means
+     *                       only a principal can take it
+     * @param escalateTo where an overdue task at {@code from} is escalated; {@code null}
+     *                   means an overdue task stays with its assignee
      */
     public record Transition(
             String from,
@@ -146,7 +184,10 @@ public record WorkflowDefinitionSpec(
             String action,
             Assignee assignee,
             Integer slaHours,
-            Outcome outcome) {
+            Outcome outcome,
+            Integer approvals,
+            Integer autoAfterHours,
+            Assignee escalateTo) {
 
         public Transition {
             if (from == null || from.isBlank()) {
@@ -165,6 +206,39 @@ public record WorkflowDefinitionSpec(
                 throw invalid("slaHours may not be negative");
             }
             assignee = assignee == null ? Assignee.anyone() : assignee;
+            if (approvals == null) {
+                approvals = 1;
+            }
+            if (approvals < 1) {
+                throw invalid("action '" + action + "' declares approvals " + approvals
+                        + "; at least one approval is required");
+            }
+            if (approvals > 1 && assignee.type() == AssigneeType.USER) {
+                throw invalid("action '" + action + "' requires " + approvals
+                        + " approvals but is assigned to one named user, who can only sign once");
+            }
+            if (approvals > 1 && autoAfterHours != null) {
+                throw invalid("action '" + action + "' is both a gate of " + approvals
+                        + " approvals and a scheduled transition; a clock cannot collect approvals");
+            }
+            if (autoAfterHours != null && autoAfterHours < 1) {
+                throw invalid("action '" + action + "' declares autoAfterHours " + autoAfterHours
+                        + "; a scheduled transition must allow at least one hour");
+            }
+            if (escalateTo != null && escalateTo.type() == AssigneeType.ANY) {
+                throw invalid("action '" + action + "' escalates to anyone, but an escalation"
+                        + " needs one destination that can be named");
+            }
+            if (escalateTo != null && slaHours == null) {
+                throw invalid("action '" + action + "' declares escalateTo without slaHours;"
+                        + " escalation triggers on the deadline that slaHours sets");
+            }
+        }
+
+        /** The ordinary case: no gate, no clock, no escalation. */
+        public Transition(String from, String to, String action, Assignee assignee,
+                          Integer slaHours, Outcome outcome) {
+            this(from, to, action, assignee, slaHours, outcome, null, null, null);
         }
     }
 

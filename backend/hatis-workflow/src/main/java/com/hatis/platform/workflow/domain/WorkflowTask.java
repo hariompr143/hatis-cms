@@ -34,10 +34,19 @@ import java.util.UUID;
  * <h2>{@code EXPIRED} and {@code dueAt}</h2>
  *
  * {@code dueAt} is derived from an optional {@code slaHours} on the transition and is
- * returned to clients so an overdue approval is visible. Nothing expires a task in
- * Phase 1: automatic escalation on a missed deadline is Phase 2 (§19.3), and a scheduled
- * job that quietly cancelled work would be a product decision, not an implementation
- * detail.
+ * returned to clients so an overdue approval is visible. A missed deadline does not
+ * silently cancel work: escalation (§19.3) marks the task {@link #markEscalated()} and
+ * raises a second task for the escalation target, and only a scheduled transition —
+ * declared in the definition as {@code autoAfterHours} — expires the tasks waiting at a
+ * state, because the clock moving the flow past them is what the deadline meant.
+ *
+ * <h2>Escalation tasks</h2>
+ *
+ * An escalation task ({@code escalation = true}) is assigned to the {@code escalateTo}
+ * destination of the transition whose deadline was missed. It is also how the escalation
+ * holder is <em>allowed</em> to act: {@code WorkflowService} lets an open escalation task's
+ * assignee take any transition from that state, because a reviewer who cannot resolve the
+ * state they were pulled in to resolve is not an escalation, just a notification.
  */
 @Entity
 @Table(name = "wf_tasks", indexes = {
@@ -82,6 +91,12 @@ public class WorkflowTask extends TenantScopedEntity {
     @Column(name = "comment", length = 2000)
     private String comment;
 
+    @Column(name = "escalation", nullable = false)
+    private boolean escalation;
+
+    @Column(name = "escalated_at")
+    private Instant escalatedAt;
+
     protected WorkflowTask() {
         super();
     }
@@ -91,6 +106,25 @@ public class WorkflowTask extends TenantScopedEntity {
                         String state,
                         WorkflowDefinitionSpec.Assignee assignee,
                         Instant dueAt) {
+        this(organizationId, instanceId, state, assignee, dueAt, false);
+    }
+
+    /**
+     * The task raised when an overdue task is escalated: {@code assignee} is the
+     * {@code escalateTo} destination, and the escalation itself has no deadline — it is
+     * already late by definition.
+     */
+    public static WorkflowTask escalation(UUID organizationId, UUID instanceId, String state,
+                                          WorkflowDefinitionSpec.Assignee assignee) {
+        return new WorkflowTask(organizationId, instanceId, state, assignee, null, true);
+    }
+
+    private WorkflowTask(UUID organizationId,
+                         UUID instanceId,
+                         String state,
+                         WorkflowDefinitionSpec.Assignee assignee,
+                         Instant dueAt,
+                         boolean escalation) {
         super(organizationId);
         if (instanceId == null) {
             throw new IllegalArgumentException("a task must name its instance");
@@ -107,6 +141,7 @@ public class WorkflowTask extends TenantScopedEntity {
         this.assigneeId = assignee.id();
         this.status = Status.OPEN;
         this.dueAt = dueAt;
+        this.escalation = escalation;
     }
 
     /** Closes the task as done. {@code comment} is the reviewer's note, and is optional. */
@@ -135,9 +170,50 @@ public class WorkflowTask extends TenantScopedEntity {
         this.completedAt = Instant.now();
     }
 
+    /**
+     * Closes the task because a scheduled transition moved the flow past it.
+     *
+     * <p>{@code EXPIRED} rather than {@code CANCELLED}: nobody withdrew this work and
+     * nobody finished it — the deadline the definition declared arrived first.
+     */
+    public void expire() {
+        if (!isOpen()) {
+            throw new PlatformExceptions.StateConflict("A task that is " + status + " cannot be expired");
+        }
+        this.status = Status.EXPIRED;
+        this.completedAt = Instant.now();
+    }
+
+    /**
+     * Records that this task breached its deadline and was escalated.
+     *
+     * <p>The task itself stays {@code OPEN}: the assignee may still act, and closing their
+     * work because a clock rang would take the approval away from the person who owes it.
+     */
+    public void markEscalated() {
+        if (!isOpen()) {
+            throw new PlatformExceptions.StateConflict("A task that is " + status + " cannot be escalated");
+        }
+        this.escalatedAt = Instant.now();
+    }
+
     /** True when this task can still be acted on. */
     public boolean isOpen() {
         return status == Status.OPEN || status == Status.CLAIMED;
+    }
+
+    /** The task's assignee as the definition declared it. */
+    public WorkflowDefinitionSpec.Assignee getAssignee() {
+        return new WorkflowDefinitionSpec.Assignee(assigneeType, assigneeId);
+    }
+
+    /** True when this task is the escalation raised for a breached deadline. */
+    public boolean isEscalation() {
+        return escalation;
+    }
+
+    public Instant getEscalatedAt() {
+        return escalatedAt;
     }
 
     public boolean isOverdue(Instant now) {

@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -220,6 +221,53 @@ class WorkflowDefinitionParserTest {
      * this fails the test if the file cannot be found, because a parser test that quietly
      * skipped would be worse than no test.
      */
+    @Test
+    @DisplayName("approvals, autoAfterHours and escalateTo are read as written")
+    void advancedTransitionFieldsAreRead() {
+        String holder = UUID.randomUUID().toString();
+        WorkflowDefinitionSpec spec = parser.parse("""
+                {
+                  "initialState": "draft",
+                  "states": ["draft", "review", "published", "gone"],
+                  "transitions": [
+                    {"from":"draft","to":"review","action":"submit",
+                     "assignee":{"type":"ROLE","id":"EDITOR"}},
+                    {"from":"review","to":"published","action":"approve",
+                     "assignee":{"type":"ROLE","id":"ORG_ADMIN"},"approvals":2},
+                    {"from":"review","to":"gone","action":"expire","autoAfterHours":48,
+                     "slaHours":24,"escalateTo":{"type":"USER","id":"%s"}}
+                  ]
+                }
+                """.formatted(holder));
+
+        WorkflowDefinitionSpec.Transition gate = spec.transition("review", "approve").orElseThrow();
+        assertThat(gate.approvals()).isEqualTo(2);
+        assertThat(gate.escalateTo()).isNull();
+
+        WorkflowDefinitionSpec.Transition timer = spec.transition("review", "expire").orElseThrow();
+        assertThat(timer.autoAfterHours()).isEqualTo(48);
+        assertThat(timer.escalateTo())
+                .isEqualTo(WorkflowDefinitionSpec.Assignee.user(UUID.fromString(holder)));
+    }
+
+    @Test
+    @DisplayName("an unknown key on escalateTo is refused, like an unknown key on assignee")
+    void anUnknownEscalationKeyIsRefused() {
+        assertThatThrownBy(() -> parser.parse("""
+                {
+                  "initialState": "draft",
+                  "states": ["draft", "published"],
+                  "transitions": [
+                    {"from":"draft","to":"published","action":"publish",
+                     "assignee":{"type":"ROLE","id":"EDITOR"},"slaHours":24,
+                     "escalateTo":{"type":"ROLE","id":"ORG_ADMIN","team":"ops"}}
+                  ]
+                }
+                """))
+                .isInstanceOf(PlatformExceptions.Validation.class)
+                .hasMessageContaining("unknown key 'team' on 'escalateTo'");
+    }
+
     private static String seededTemplate() throws IOException {
         for (String candidate : new String[]{
                 "src/main/resources/db/migration/V1_008__workflow.sql",

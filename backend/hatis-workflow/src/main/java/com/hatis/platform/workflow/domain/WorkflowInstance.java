@@ -28,9 +28,17 @@ import java.util.UUID;
  * instance {@code RUNNING} — which is why a rejection that can be reworked keeps running
  * in the seeded editorial workflow. A transition into a state with no outgoing transitions
  * ends the instance, with {@code COMPLETED} as the default and the transition's declared
- * outcome when it names one. {@code STUCK} is defined here because the column permits it
- * and a reader must be able to load any row the schema allows; nothing sets it in Phase 1,
- * because escalation on missed deadlines is Phase 2 ({@code docs/architecture/19}, §19.3).
+ * outcome when it names one.
+ *
+ * <h2>{@code STUCK} means work is owed, not finished</h2>
+ *
+ * Escalation on a missed deadline (§19.3) marks the instance {@code STUCK}: the assignee
+ * did not act in the time the definition allowed, and the escalation holder has been
+ * pulled in to resolve it. Stuck is still in flight — the escalation holder can move it,
+ * a scheduled transition can still fire, and an administrator can still withdraw it — so
+ * {@link #isRunning()} covers {@code STUCK} as well. What separates {@code STUCK} from
+ * {@code RUNNING} in the reports is that the deadline was missed, which is a fact worth
+ * keeping after the flow moves on.
  */
 @Entity
 @Table(name = "wf_instances", indexes = {
@@ -69,6 +77,14 @@ public class WorkflowInstance extends TenantScopedEntity {
     @Column(name = "started_at", nullable = false, updatable = false)
     private Instant startedAt;
 
+    /**
+     * When the instance arrived at its current state. Scheduled transitions fire at
+     * {@code currentStateSince + autoAfterHours}, so this must move with the state rather
+     * than be derived from history rows.
+     */
+    @Column(name = "current_state_since", nullable = false)
+    private Instant currentStateSince;
+
     @Column(name = "completed_at")
     private Instant completedAt;
 
@@ -98,32 +114,51 @@ public class WorkflowInstance extends TenantScopedEntity {
         this.currentState = initialState;
         this.status = Status.RUNNING;
         this.startedAt = Instant.now();
+        this.currentStateSince = this.startedAt;
     }
 
     /**
      * Moves the instance to {@code state}.
      *
+     * <p>Moving resolves a stuck instance: whatever the deadline breach was, the flow has
+     * now been moved past it, and the instance is running again until it finishes.
+     *
      * @param terminalOutcome the outcome to record when {@code state} has no outgoing
      *                        transitions; {@code null} leaves the instance running
      */
     public void advanceTo(String state, WorkflowDefinitionSpec.Outcome terminalOutcome) {
-        if (status != Status.RUNNING) {
+        if (status != Status.RUNNING && status != Status.STUCK) {
             throw new PlatformExceptions.StateConflict(
                     "This workflow is " + status + " and cannot move to " + state);
         }
         this.currentState = state;
+        this.currentStateSince = Instant.now();
         if (terminalOutcome != null) {
             finish(terminalOutcome);
+        } else {
+            this.status = Status.RUNNING;
         }
     }
 
     /** Ends the instance without an approval decision: an administrator withdrew it. */
     public void cancel() {
-        if (status != Status.RUNNING) {
+        if (status != Status.RUNNING && status != Status.STUCK) {
             throw new PlatformExceptions.StateConflict("Only a running workflow can be cancelled");
         }
         this.status = Status.CANCELLED;
         this.completedAt = Instant.now();
+    }
+
+    /**
+     * Records that a deadline was missed at the current state and escalation is under way.
+     *
+     * <p>Idempotent: several overdue tasks at the same state escalate against one instance,
+     * and the second breach does not re-mark the first.
+     */
+    public void markStuck() {
+        if (status == Status.RUNNING) {
+            this.status = Status.STUCK;
+        }
     }
 
     private void finish(WorkflowDefinitionSpec.Outcome outcome) {
@@ -135,8 +170,18 @@ public class WorkflowInstance extends TenantScopedEntity {
         this.completedAt = Instant.now();
     }
 
+    /**
+     * Whether the instance can still be acted on.
+     *
+     * <p>{@code STUCK} counts: an escalation exists precisely so that somebody can move it,
+     * and refusing the move would make the escalation pointless.
+     */
     public boolean isRunning() {
-        return status == Status.RUNNING;
+        return status == Status.RUNNING || status == Status.STUCK;
+    }
+
+    public Instant getCurrentStateSince() {
+        return currentStateSince;
     }
 
     public UUID getDefinitionId() {

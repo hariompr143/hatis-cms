@@ -14,10 +14,12 @@ import com.hatis.platform.shared.tenant.TenantContext;
 import com.hatis.platform.shared.tenant.TenantContextHolder;
 import com.hatis.platform.workflow.adapter.persistence.WorkflowHistoryStore;
 import com.hatis.platform.workflow.adapter.persistence.WorkflowRepositories;
+import com.hatis.platform.workflow.adapter.persistence.WorkflowSignOffStore;
 import com.hatis.platform.workflow.domain.WorkflowDefinition;
 import com.hatis.platform.workflow.domain.WorkflowDefinitionSpec;
 import com.hatis.platform.workflow.domain.WorkflowFixtures;
 import com.hatis.platform.workflow.domain.WorkflowInstance;
+import com.hatis.platform.workflow.domain.WorkflowSignOffEntry;
 import com.hatis.platform.workflow.domain.WorkflowTask;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -102,6 +104,8 @@ class WorkflowServiceTest {
     @Mock
     private WorkflowHistoryStore history;
     @Mock
+    private WorkflowSignOffStore signOffs;
+    @Mock
     private AuthorizationService authorization;
     @Mock
     private NotificationService notifications;
@@ -117,7 +121,7 @@ class WorkflowServiceTest {
         TenantContextHolder.set(TenantContext.of(organizationId, principalId,
                 TenantContext.PrincipalType.USER));
         service = new WorkflowService(definitions, instances, tasks,
-                new WorkflowDefinitionParser(new ObjectMapper()), history, authorization,
+                new WorkflowDefinitionParser(new ObjectMapper()), history, signOffs, authorization,
                 notifications, events, audit);
     }
 
@@ -174,8 +178,9 @@ class WorkflowServiceTest {
     void aSecondStartIsRefused() {
         WorkflowDefinition definition = template(EDITORIAL);
         stubTemplate(definition);
-        when(instances.findFirstByOrganizationIdAndSubjectTypeAndSubjectIdAndStatus(
-                organizationId, SUBJECT_TYPE, subjectId, WorkflowInstance.Status.RUNNING))
+        when(instances.findFirstByOrganizationIdAndSubjectTypeAndSubjectIdAndStatusIn(
+                org.mockito.ArgumentMatchers.eq(organizationId), eq(SUBJECT_TYPE), eq(subjectId),
+                org.mockito.ArgumentMatchers.anyCollection()))
                 .thenReturn(Optional.of(new WorkflowInstance(organizationId, definition, "draft",
                         SUBJECT_TYPE, subjectId)));
 
@@ -539,6 +544,169 @@ class WorkflowServiceTest {
         verify(tasks, never()).findAssignedToWithRoles(any(), any(), any(), any(), any(), any(), any(), any());
     }
 
+    // ------------------------------------------- parallel gates and escalation
+
+    /** A review state whose {@code approve} needs two distinct sign-offs. */
+    private static final String GATED = """
+            {
+              "initialState": "draft",
+              "states": ["draft", "in_review", "published"],
+              "transitions": [
+                {"from":"draft","to":"in_review","action":"submit",
+                 "assignee":{"type":"ROLE","id":"EDITOR"}},
+                {"from":"in_review","to":"published","action":"approve",
+                 "assignee":{"type":"ROLE","id":"ORG_ADMIN"},"approvals":2}
+              ]
+            }
+            """;
+
+    @Test
+    @DisplayName("a gate records one approval and leaves the state where it is")
+    void aGateRecordsOneApprovalAndWaits() {
+        WorkflowDefinition definition = template(GATED);
+        WorkflowInstance instance = instanceAt(definition, "in_review");
+        WorkflowTask adminTask = new WorkflowTask(organizationId, instance.getId(), "in_review",
+                WorkflowDefinitionSpec.Assignee.role("ORG_ADMIN"), null);
+        stubInstanceLookup(instance, definition);
+        when(authorization.rolesAt(ScopeType.ORGANIZATION, organizationId)).thenReturn(List.of("ORG_ADMIN"));
+        when(tasks.findByOrganizationIdAndInstanceIdAndStatusIn(any(), any(), any()))
+                .thenReturn(List.of(adminTask));
+        when(signOffs.findForGate(organizationId, instance.getId(), "in_review", "approve"))
+                .thenReturn(List.of(), List.of(new WorkflowSignOffEntry(UUID.randomUUID(),
+                        instance.getId(), "in_review", "approve", principalId, "looks good",
+                        java.time.Instant.now())));
+        when(instances.save(any(WorkflowInstance.class))).thenAnswer(call -> call.getArgument(0));
+        stubDetailReads();
+
+        WorkflowService.InstanceDetail detail = service.transition(
+                new WorkflowService.TransitionCommand(instance.getId(), "approve", "looks good"));
+
+        assertThat(detail.instance().currentState())
+                .as("one approval does not satisfy a gate of two")
+                .isEqualTo("in_review");
+        assertThat(detail.gates()).hasSize(1);
+        assertThat(detail.gates().get(0).action()).isEqualTo("approve");
+        assertThat(detail.gates().get(0).required()).isEqualTo(2);
+        assertThat(detail.gates().get(0).signOffs()).hasSize(1);
+
+        verify(signOffs).record(organizationId, instance.getId(), "in_review", "approve",
+                principalId, "looks good");
+        // The task stays open: the state still needs the second approval.
+        verify(tasks, never()).save(any(WorkflowTask.class));
+        verify(history).append(org.mockito.ArgumentMatchers.eq(organizationId), eq(instance.getId()),
+                eq("in_review"), eq("in_review"), eq("approve"), eq(principalId),
+                org.mockito.ArgumentMatchers.contains("approval 1 of 2"));
+
+        ArgumentCaptor<PlatformEvent> published = ArgumentCaptor.forClass(PlatformEvent.class);
+        verify(events).publish(published.capture());
+        assertThat(published.getValue().eventType()).isEqualTo("workflow.approval.recorded");
+        assertThat(published.getValue().data()).containsEntry("approvalsCollected", 1);
+        assertThat(published.getValue().data()).containsEntry("approvalsRequired", 2);
+    }
+
+    @Test
+    @DisplayName("the second distinct approval is the move")
+    void theSecondApprovalMovesTheInstance() {
+        WorkflowDefinition definition = template(GATED);
+        WorkflowInstance instance = instanceAt(definition, "in_review");
+        WorkflowTask adminTask = new WorkflowTask(organizationId, instance.getId(), "in_review",
+                WorkflowDefinitionSpec.Assignee.role("ORG_ADMIN"), null);
+        stubInstanceLookup(instance, definition);
+        when(authorization.rolesAt(ScopeType.ORGANIZATION, organizationId)).thenReturn(List.of("ORG_ADMIN"));
+        when(tasks.findByOrganizationIdAndInstanceIdAndStatusIn(any(), any(), any()))
+                .thenReturn(List.of(adminTask));
+        when(signOffs.findForGate(organizationId, instance.getId(), "in_review", "approve"))
+                .thenReturn(List.of(new WorkflowSignOffEntry(UUID.randomUUID(), instance.getId(),
+                        "in_review", "approve", UUID.randomUUID(), null,
+                        java.time.Instant.now())));
+        when(instances.save(any(WorkflowInstance.class))).thenAnswer(call -> call.getArgument(0));
+        when(tasks.save(any(WorkflowTask.class))).thenAnswer(call -> call.getArgument(0));
+        stubDetailReads();
+
+        WorkflowService.InstanceDetail detail = service.transition(
+                new WorkflowService.TransitionCommand(instance.getId(), "approve", "second"));
+
+        assertThat(detail.instance().currentState()).isEqualTo("published");
+        assertThat(detail.instance().status()).isEqualTo("COMPLETED");
+        assertThat(adminTask.getStatus()).isEqualTo(WorkflowTask.Status.COMPLETED);
+        assertThat(detail.gates()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("the same principal signing twice is refused rather than counted")
+    void aDuplicateSignOffIsRefused() {
+        WorkflowDefinition definition = template(GATED);
+        WorkflowInstance instance = instanceAt(definition, "in_review");
+        stubInstanceLookup(instance, definition);
+        when(authorization.rolesAt(ScopeType.ORGANIZATION, organizationId)).thenReturn(List.of("ORG_ADMIN"));
+        when(tasks.findByOrganizationIdAndInstanceIdAndStatusIn(any(), any(), any()))
+                .thenReturn(List.of());
+        when(signOffs.findForGate(organizationId, instance.getId(), "in_review", "approve"))
+                .thenReturn(List.of(new WorkflowSignOffEntry(UUID.randomUUID(), instance.getId(),
+                        "in_review", "approve", principalId, "already said this",
+                        java.time.Instant.now())));
+
+        assertThatThrownBy(() -> service.transition(new WorkflowService.TransitionCommand(
+                instance.getId(), "approve", "again")))
+                .isInstanceOf(PlatformExceptions.StateConflict.class)
+                .hasMessageContaining("already signed off");
+
+        verify(signOffs, never()).record(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("an escalation holder resolves the state the definition assigns to somebody else")
+    void anEscalationHolderActsOnTheStuckState() {
+        UUID escalationHolder = UUID.randomUUID();
+        WorkflowDefinition definition = template(EDITORIAL);
+        WorkflowInstance instance = instanceAt(definition, "in_review");
+        WorkflowTask adminTask = new WorkflowTask(organizationId, instance.getId(), "in_review",
+                WorkflowDefinitionSpec.Assignee.role("ORG_ADMIN"), null);
+        WorkflowTask escalationTask = WorkflowTask.escalation(organizationId, instance.getId(),
+                "in_review", WorkflowDefinitionSpec.Assignee.user(escalationHolder));
+        stubInstanceLookup(instance, definition);
+        // The escalation holder holds no ORG_ADMIN role: only the escalation task lets them in.
+        when(authorization.rolesAt(ScopeType.ORGANIZATION, organizationId)).thenReturn(List.of("VIEWER"));
+        when(tasks.findByOrganizationIdAndInstanceIdAndStatusIn(any(), any(), any()))
+                .thenReturn(List.of(adminTask, escalationTask));
+        when(instances.save(any(WorkflowInstance.class))).thenAnswer(call -> call.getArgument(0));
+        when(tasks.save(any(WorkflowTask.class))).thenAnswer(call -> call.getArgument(0));
+        stubDetailReads();
+
+        TenantContextHolder.set(TenantContext.of(organizationId, escalationHolder,
+                TenantContext.PrincipalType.USER));
+        WorkflowService.InstanceDetail detail = service.transition(
+                new WorkflowService.TransitionCommand(instance.getId(), "publish", "escalated to me"));
+
+        assertThat(detail.instance().currentState()).isEqualTo("published");
+        assertThat(escalationTask.getStatus())
+                .as("the holder's work is completed, not cancelled")
+                .isEqualTo(WorkflowTask.Status.COMPLETED);
+        assertThat(escalationTask.getCompletedBy()).isEqualTo(escalationHolder);
+        assertThat(adminTask.getStatus())
+                .as("the assignee's task is closed as the state was left")
+                .isEqualTo(WorkflowTask.Status.CANCELLED);
+    }
+
+    @Test
+    @DisplayName("an escalation task does not open the state to everyone")
+    void anEscalationDoesNotOpenTheStateToEveryone() {
+        UUID escalationHolder = UUID.randomUUID();
+        WorkflowDefinition definition = template(EDITORIAL);
+        WorkflowInstance instance = instanceAt(definition, "in_review");
+        WorkflowTask escalationTask = WorkflowTask.escalation(organizationId, instance.getId(),
+                "in_review", WorkflowDefinitionSpec.Assignee.user(escalationHolder));
+        stubInstanceLookup(instance, definition);
+        when(authorization.rolesAt(ScopeType.ORGANIZATION, organizationId)).thenReturn(List.of("VIEWER"));
+        when(tasks.findByOrganizationIdAndInstanceIdAndStatusIn(any(), any(), any()))
+                .thenReturn(List.of(escalationTask));
+
+        // principalId is neither the assignee nor the escalation holder.
+        assertThatThrownBy(() -> service.transition(new WorkflowService.TransitionCommand(
+                instance.getId(), "publish", null)))
+                .isInstanceOf(PlatformExceptions.Forbidden.class);
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private static WorkflowDefinition template(String json) {
@@ -551,8 +719,9 @@ class WorkflowServiceTest {
     }
 
     private void stubNoRunningInstance() {
-        when(instances.findFirstByOrganizationIdAndSubjectTypeAndSubjectIdAndStatus(
-                organizationId, SUBJECT_TYPE, subjectId, WorkflowInstance.Status.RUNNING))
+        when(instances.findFirstByOrganizationIdAndSubjectTypeAndSubjectIdAndStatusIn(
+                org.mockito.ArgumentMatchers.eq(organizationId), eq(SUBJECT_TYPE), eq(subjectId),
+                org.mockito.ArgumentMatchers.anyCollection()))
                 .thenReturn(Optional.empty());
     }
 

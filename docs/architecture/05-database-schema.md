@@ -212,11 +212,14 @@ wf_definitions             (id, organization_id, project_id, key, name, version,
                             definition jsonb, status, created_at)
 wf_instances               (id, organization_id, definition_id, definition_version,
                             subject_type, subject_id, current_state, status,
-                            started_at, completed_at, created_at, updated_at)
+                            current_state_since, started_at, completed_at, created_at, updated_at)
 wf_tasks                   (id, instance_id, state, assignee_type, assignee_id,
-                            status, due_at, completed_at, completed_by, comment, created_at)
+                            status, due_at, escalation, escalated_at, completed_at,
+                            completed_by, comment, created_at)
 wf_history                 (id, instance_id, from_state, to_state, action, actor_id,
                             reason, occurred_at)
+wf_signoffs                (id, instance_id, organization_id, state, action, actor_id,
+                            comment, signed_at)
 ```
 
 ### Deployment (`dep_`)

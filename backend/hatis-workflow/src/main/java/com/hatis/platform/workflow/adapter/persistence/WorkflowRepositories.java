@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -62,8 +63,14 @@ public interface WorkflowRepositories {
 
         Optional<WorkflowInstance> findByIdAndOrganizationId(UUID id, UUID organizationId);
 
-        Optional<WorkflowInstance> findFirstByOrganizationIdAndSubjectTypeAndSubjectIdAndStatus(
-                UUID organizationId, String subjectType, UUID subjectId, WorkflowInstance.Status status);
+        /**
+         * In-flight instances of one subject. {@code STUCK} is in the caller's collection
+         * alongside {@code RUNNING}: a stuck instance is still work that was started, and
+         * starting a second one would fork the approval around the first.
+         */
+        Optional<WorkflowInstance> findFirstByOrganizationIdAndSubjectTypeAndSubjectIdAndStatusIn(
+                UUID organizationId, String subjectType, UUID subjectId,
+                Collection<WorkflowInstance.Status> statuses);
 
         Page<WorkflowInstance> findByOrganizationId(UUID organizationId, Pageable pageable);
 
@@ -75,6 +82,10 @@ public interface WorkflowRepositories {
                                                                               String subjectType,
                                                                               UUID subjectId,
                                                                               Pageable pageable);
+
+        /** The instances the maintenance sweep walks: everything still in flight. */
+        List<WorkflowInstance> findByOrganizationIdAndStatusIn(UUID organizationId,
+                                                               Collection<WorkflowInstance.Status> statuses);
     }
 
     interface TaskRepository extends JpaRepository<WorkflowTask, UUID> {
@@ -87,6 +98,10 @@ public interface WorkflowRepositories {
         List<WorkflowTask> findByOrganizationIdAndInstanceIdAndStatusIn(UUID organizationId,
                                                                         UUID instanceId,
                                                                         Collection<WorkflowTask.Status> statuses);
+
+        /** Open tasks whose deadline has passed and that have not been escalated yet. */
+        List<WorkflowTask> findByOrganizationIdAndStatusAndDueAtBeforeAndEscalatedAtIsNull(
+                UUID organizationId, WorkflowTask.Status status, Instant dueBefore);
 
         /**
          * Open tasks this principal can act on, including the ones assigned to a role they hold.

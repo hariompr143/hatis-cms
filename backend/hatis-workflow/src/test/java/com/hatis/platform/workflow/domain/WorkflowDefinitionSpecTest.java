@@ -201,6 +201,108 @@ class WorkflowDefinitionSpecTest {
                 .isInstanceOf(UnsupportedOperationException.class);
     }
 
+    @Test
+    @DisplayName("a gate must require at least one approval")
+    void aGateNeedsAtLeastOneApproval() {
+        assertThatThrownBy(() -> new WorkflowDefinitionSpec.Transition(
+                "draft", "published", "publish", WorkflowDefinitionSpec.Assignee.role(EDITOR),
+                null, null, 0, null, null))
+                .isInstanceOf(PlatformExceptions.Validation.class)
+                .hasMessageContaining("at least one approval");
+    }
+
+    @Test
+    @DisplayName("a gate of several approvals is refused for one named user, who can sign once")
+    void aGateCannotBeAssignedToOneUser() {
+        assertThatThrownBy(() -> new WorkflowDefinitionSpec.Transition(
+                "draft", "published", "publish",
+                WorkflowDefinitionSpec.Assignee.user(UUID.randomUUID()),
+                null, null, 2, null, null))
+                .isInstanceOf(PlatformExceptions.Validation.class)
+                .hasMessageContaining("can only sign once");
+    }
+
+    @Test
+    @DisplayName("a gate cannot also be a scheduled transition: a clock cannot collect approvals")
+    void aGateCannotBeScheduled() {
+        assertThatThrownBy(() -> new WorkflowDefinitionSpec.Transition(
+                "draft", "published", "publish", WorkflowDefinitionSpec.Assignee.role(EDITOR),
+                null, null, 2, 24, null))
+                .isInstanceOf(PlatformExceptions.Validation.class)
+                .hasMessageContaining("a clock cannot collect approvals");
+    }
+
+    @Test
+    @DisplayName("a scheduled transition must allow at least one hour")
+    void aScheduledTransitionNeedsTime() {
+        assertThatThrownBy(() -> new WorkflowDefinitionSpec.Transition(
+                "draft", "published", "publish", WorkflowDefinitionSpec.Assignee.role(EDITOR),
+                null, null, null, 0, null))
+                .isInstanceOf(PlatformExceptions.Validation.class)
+                .hasMessageContaining("at least one hour");
+    }
+
+    @Test
+    @DisplayName("one state may declare only one scheduled transition, for the reason actions are unique")
+    void oneScheduledTransitionPerState() {
+        WorkflowDefinitionSpec.Transition first = new WorkflowDefinitionSpec.Transition(
+                "draft", "published", "publish", WorkflowDefinitionSpec.Assignee.role(EDITOR),
+                null, null, null, 24, null);
+        WorkflowDefinitionSpec.Transition second = new WorkflowDefinitionSpec.Transition(
+                "draft", "rejected", "expire", WorkflowDefinitionSpec.Assignee.role(EDITOR),
+                null, null, null, 48, null);
+
+        assertThatThrownBy(() -> new WorkflowDefinitionSpec("draft",
+                List.of("draft", "published", "rejected"), List.of(first, second)))
+                .isInstanceOf(PlatformExceptions.Validation.class)
+                .hasMessageContaining("more than one scheduled transition");
+    }
+
+    @Test
+    @DisplayName("an escalation needs a destination that can be named")
+    void anEscalationNeedsADestination() {
+        assertThatThrownBy(() -> new WorkflowDefinitionSpec.Transition(
+                "draft", "published", "publish", WorkflowDefinitionSpec.Assignee.role(EDITOR),
+                24, null, null, null, WorkflowDefinitionSpec.Assignee.anyone()))
+                .isInstanceOf(PlatformExceptions.Validation.class)
+                .hasMessageContaining("one destination that can be named");
+    }
+
+    @Test
+    @DisplayName("an escalation without a deadline is refused: the deadline is the trigger")
+    void anEscalationNeedsADeadline() {
+        assertThatThrownBy(() -> new WorkflowDefinitionSpec.Transition(
+                "draft", "published", "publish", WorkflowDefinitionSpec.Assignee.role(EDITOR),
+                null, null, null, null,
+                WorkflowDefinitionSpec.Assignee.user(UUID.randomUUID())))
+                .isInstanceOf(PlatformExceptions.Validation.class)
+                .hasMessageContaining("escalation triggers on the deadline");
+    }
+
+    @Test
+    @DisplayName("a well-formed gate, timer and escalation are accepted and queryable")
+    void advancedFieldsAreQueryable() {
+        UUID holder = UUID.randomUUID();
+        WorkflowDefinitionSpec.Transition gated = new WorkflowDefinitionSpec.Transition(
+                "review", "published", "approve", WorkflowDefinitionSpec.Assignee.role(EDITOR),
+                8, null, 2, null, null);
+        WorkflowDefinitionSpec.Transition timed = new WorkflowDefinitionSpec.Transition(
+                "review", "rejected", "expire", WorkflowDefinitionSpec.Assignee.role(EDITOR),
+                24, null, null, 48,
+                WorkflowDefinitionSpec.Assignee.user(holder));
+        WorkflowDefinitionSpec spec = new WorkflowDefinitionSpec("review",
+                List.of("review", "published", "rejected"), List.of(gated, timed));
+
+        assertThat(gated.approvals()).isEqualTo(2);
+        assertThat(timed.autoAfterHours()).isEqualTo(48);
+        assertThat(timed.escalateTo()).isEqualTo(WorkflowDefinitionSpec.Assignee.user(holder));
+        assertThat(spec.minSlaHours("review", WorkflowDefinitionSpec.Assignee.role(EDITOR)))
+                .as("the earliest deadline among the assignee's transitions")
+                .isEqualTo(8);
+        assertThat(spec.scheduledFrom("review")).contains(timed);
+        assertThat(spec.scheduledFrom("published")).isEmpty();
+    }
+
     private static WorkflowDefinitionSpec spec() {
         return new WorkflowDefinitionSpec("draft", List.of("draft", "in_review", "published"),
                 List.of(transition("draft", "in_review", "submit"),

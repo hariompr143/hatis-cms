@@ -83,6 +83,39 @@ customer VPC connectivity, multi-region disaster recovery.
 Entry criterion: Phase 1 running in production with real tenants. Extracting
 services before then optimises a shape that has not met load.
 
+*Built so far — the phase is in progress; every capability below runs in the CI
+verification named in §19.6:*
+
+- **Advanced workflow.** All three named capabilities, each refusing rather than
+  ignoring what it cannot honour:
+  - *Parallel gates* — `approvals` on a transition collects that many distinct sign-offs
+    (`wf_signoffs`, append-only, one row per principal) before the action fires. The
+    tasks at the state stay open while the gate fills, each sign-off is a history entry
+    and an event of its own, the same principal signing twice is refused, and a gate of
+    several approvals assigned to one named user is refused when the definition is read.
+  - *Scheduled transitions* — `autoAfterHours` lets the clock fire a transition when the
+    instance has been at its `from` state that long; arrival is
+    `wf_instances.current_state_since`, not a guess from history rows. The tasks it moves
+    past are `EXPIRED` — nobody did them and nobody withdrew them — and the history row
+    names no actor, because the clock did it. At most one scheduled transition per state,
+    for the same declaration-order reason actions are unique per state.
+  - *SLA escalation* — a task past its `dueAt` is escalated once to the `escalateTo`
+    destination declared alongside the deadline: the task is marked (`escalated_at`), the
+    instance becomes `STUCK`, and a second task is raised for the destination, who may
+    then resolve any transition from that state even one assigned to somebody else. The
+    assignee's task stays open — escalation pulls somebody in, it does not confiscate the
+    work. A deadline with no `escalateTo` stays overdue and visible in its queue: the
+    destination is the customer's to name.
+  - The clock lives in `WorkflowMaintenance` and `WorkflowSweepJob` (worker role only,
+    `hatis.workflow.sweep-interval`), the same tenant-directory sweep shape as
+    `AlertScanJob`. Timers run before escalation: a scheduled transition resolves the
+    deadline it declared, and there is nothing left at that state to escalate.
+
+*Still open in Phase 2:* advanced analytics (the platform-event rollups deferred from
+§19.2), SSO (SAML, OIDC) and SCIM provisioning, private deployment packaging, customer
+VPC connectivity, and multi-region disaster recovery — the last of which needs a running
+estate and the quarterly drills §17.8 describes.
+
 ## 19.4 Phase 3 — Platform
 
 CRM, ERP and BI connectors, AI-assisted content, an extension marketplace,
