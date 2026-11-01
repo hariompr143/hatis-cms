@@ -142,12 +142,13 @@ customer content into a third-party model without a per-tenant control.
 
 Stated plainly, because a claim of "done" without a named check is worth nothing.
 
-**Verified in GitHub Actions, run `41329321347` on commit `baa5de2` — all eight jobs
+**Verified in GitHub Actions, run `41331079905` on commit `b0b1056` — all eight jobs
 green, including the image job:**
 
 - **Backend (Java 21 / Spring Boot): success.** 17 modules compile and `mvn verify`
-  completes: **435 tests, 0 failures, 0 errors, 0 skipped** across 43 classes — the
-  21 advanced-workflow tests (gates, timers, escalation) since `41320497081`'s 414/42,
+  completes: **438 tests, 0 failures, 0 errors, 0 skipped** across 44 classes — the
+  three event-rollup tests since `41329321347`'s 435/43, the 21 advanced-workflow tests
+  (gates, timers, escalation) since `41320497081`'s 414/42,
   itself the five restore-drill tests over `41237628487`'s 409/41. The red runs in
   between are part of the record: `41234263858` failed compiling the first socket
   test, `41234576807` and `41235518196` failed the pin test until the second one's
@@ -158,7 +159,9 @@ green, including the image job:**
   when the statement runs another query), `41328813530` failed two workflow tests
   (a strict-stubs complaint and my test contradicting the takeover rule the class
   javadoc states), and `41329083847` failed compiling the CMS review test's stub of
-  `InstanceDetail`, which had grown a gates component.
+  `InstanceDetail`, which had grown a gates component. `41330790566` failed one
+  rollup test whose own assertion miscounted the recorded statements (the query is
+  recorded too) — the code was right and the test was not.
 - **Build and scan container image: success**, after eight of the twelve November
   findings were fixed at the versions the scan names and four Spring Framework
   advisories were accepted with evidence — both below.
