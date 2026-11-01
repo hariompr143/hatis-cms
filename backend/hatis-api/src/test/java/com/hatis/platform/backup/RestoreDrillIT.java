@@ -256,17 +256,23 @@ class RestoreDrillIT {
     // ------------------------------------------------------------- verification
 
     private static Map<String, Long> counts(Connection connection) throws SQLException {
-        Map<String, Long> result = new TreeMap<>();
+        // The table names are collected first: executing the count query on the
+        // same Statement would close the ResultSet that is still being walked.
+        List<String> tables = new ArrayList<>();
         try (Statement statement = connection.createStatement();
-             ResultSet tables = statement.executeQuery(
+             ResultSet rows = statement.executeQuery(
                      "select table_name from information_schema.tables"
                              + " where table_schema = 'public' and table_type = 'BASE TABLE'")) {
-            while (tables.next()) {
-                String table = tables.getString(1);
-                try (ResultSet count = statement.executeQuery("select count(*) from \"" + table + "\"")) {
-                    count.next();
-                    result.put(table, count.getLong(1));
-                }
+            while (rows.next()) {
+                tables.add(rows.getString(1));
+            }
+        }
+        Map<String, Long> result = new TreeMap<>();
+        for (String table : tables) {
+            try (Statement statement = connection.createStatement();
+                 ResultSet count = statement.executeQuery("select count(*) from \"" + table + "\"")) {
+                count.next();
+                result.put(table, count.getLong(1));
             }
         }
         return result;
