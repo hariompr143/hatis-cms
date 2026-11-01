@@ -84,9 +84,11 @@ class EventRollupWorkTest {
 
         assertThat(work.roll(organizationId, now)).isZero();
         assertThat(jdbcTemplate.statements)
-                .as("the delete still runs: a recompute must clear rows even when the count fell to zero")
-                .hasSize(1);
-        assertThat(jdbcTemplate.statements.get(0)).contains("delete from anl_metrics");
+                .as("the delete and the count still run; nothing is inserted — the recompute "
+                        + "must clear the window's rows even when the count fell to zero")
+                .hasSize(2)
+                .anySatisfy(sql -> assertThat(sql).contains("delete from anl_metrics"))
+                .noneSatisfy(sql -> assertThat(sql).contains("insert into anl_metrics"));
     }
 
     @Test
