@@ -575,7 +575,6 @@ class WorkflowServiceTest {
                 .thenReturn(List.of(), List.of(new WorkflowSignOffEntry(UUID.randomUUID(),
                         instance.getId(), "in_review", "approve", principalId, "looks good",
                         java.time.Instant.now())));
-        when(instances.save(any(WorkflowInstance.class))).thenAnswer(call -> call.getArgument(0));
         stubDetailReads();
 
         WorkflowService.InstanceDetail detail = service.transition(
@@ -684,8 +683,10 @@ class WorkflowServiceTest {
                 .isEqualTo(WorkflowTask.Status.COMPLETED);
         assertThat(escalationTask.getCompletedBy()).isEqualTo(escalationHolder);
         assertThat(adminTask.getStatus())
-                .as("the assignee's task is closed as the state was left")
-                .isEqualTo(WorkflowTask.Status.CANCELLED);
+                .as("the assignee's task is completed too — the holder resolved it for them, "
+                        + "and the record names who actually acted")
+                .isEqualTo(WorkflowTask.Status.COMPLETED);
+        assertThat(adminTask.getCompletedBy()).isEqualTo(escalationHolder);
     }
 
     @Test
