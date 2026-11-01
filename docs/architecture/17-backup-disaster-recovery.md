@@ -32,7 +32,7 @@ databases, the platform owns the schedule and exposes `latestBackup` through
 
 **Verified by.** A scheduled restore into a scratch instance, followed by
 `aud_verify_chain` on every tenant and a row-count comparison against the source.
-A restore that is not run does not count as a backup.
+A restore that is not run does not count as a backup. That sequence runs on every build as `RestoreDrillIT` (backend/hatis-api), against two real PostgreSQL 16 instances: a backup taken with the runbook's tools — `pg_dump` for the database, `pg_dumpall --globals-only` for the roles, because roles are cluster-level and a database-only restore lands in a cluster where `hatis_app` does not exist — restored into a fresh instance, then §17.7 step 3's checks verbatim: `aud_verify_chain` for every tenant, the applied migration set equal to the files the tree ships, row counts equal in every table — plus the posture a restore must not lose: the row level security policies preserved and `hatis_app` still refusing history rewrites. The chain check includes a negative control (one link rewritten as superuser, the function must report the break) so the verifier is shown to fail when the chain is broken.
 
 ## 17.3 Object storage
 
@@ -100,6 +100,14 @@ Quarterly, on a copy of production:
 - asset integrity reconciliation;
 - a deployment executed against the restored control plane;
 - timed, with the RPO/RTO above as the pass criterion.
+
+The logical half of this list runs on every build as `RestoreDrillIT` — restore into
+a fresh instance, `aud_verify_chain` across all tenants, migration set and row
+counts, RLS policies and grants preserved (§17.2). What remains the quarterly
+exercise is what needs a production copy and a running estate: PITR to an arbitrary
+timestamp, reconciliation against live object storage, a deployment against the
+restored control plane, and the timing that turns the RPO/RTO figures from targets
+into results.
 
 The result is recorded. An untested recovery plan is documentation, not a
 capability.
