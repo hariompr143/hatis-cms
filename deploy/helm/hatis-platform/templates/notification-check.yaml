@@ -40,3 +40,4 @@ data:
   email-password-secret-name: {{ include "hatis.secretName" . | quote }}
   {{- end }}
   analytics-alert-interval: {{ .Values.analytics.alertInterval | quote }}
+  analytics-rollup-interval: {{ .Values.analytics.rollupInterval | quote }}

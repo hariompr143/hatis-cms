@@ -155,6 +155,10 @@ hatis:
     # How often each tenant's alerts are evaluated. This bounds how late a firing can be:
     # a threshold crossed at 09:00 is reported within one interval, not immediately.
     alert-interval: ${HATIS_ANALYTICS_ALERT_INTERVAL:60s}
+    # How often the platform-event rollup is recomputed per tenant. It covers closed days
+    # only, so this bounds the staleness of a late arrival or a day that just closed — not
+    # the freshness of today, which the rollup deliberately does not write.
+    rollup-interval: ${HATIS_ANALYTICS_ROLLUP_INTERVAL:1h}
 
 springdoc:
   api-docs:

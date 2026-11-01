@@ -110,11 +110,22 @@ verification named in §19.6:*
     `hatis.workflow.sweep-interval`), the same tenant-directory sweep shape as
     `AlertScanJob`. Timers run before escalation: a scheduled transition resolves the
     deadline it declared, and there is nothing left at that state to escalate.
+- **Advanced analytics — platform-event rollups.** `EventRollupWork` turns the platform's
+  own event stream (`plat_outbox`) into `platform.events`: one metric sample per closed day
+  per event type, written through the same `MetricStore` the metrics API writes through,
+  so the alert evaluator and dashboards read platform activity with no new machinery. The
+  rows are derived and are recomputed, never accumulated — each sweep deletes the window
+  and rewrites it from the outbox in one transaction, so a re-run cannot double-count and
+  a late event lands correctly. The window is the trailing 30 closed days; today is
+  deliberately not written, because a bucket still filling would go stale the moment the
+  sweep looked away. Day boundaries come from `date_trunc('day', …)` on both the counting
+  and the deleting side. `EventRollupJob` runs it (worker role,
+  `hatis.analytics.rollup-interval`, hourly by default), `EventRollupWorkTest` pins the
+  recompute-before-write order, the bound values and the double-run sameness.
 
-*Still open in Phase 2:* advanced analytics (the platform-event rollups deferred from
-§19.2), SSO (SAML, OIDC) and SCIM provisioning, private deployment packaging, customer
-VPC connectivity, and multi-region disaster recovery — the last of which needs a running
-estate and the quarterly drills §17.8 describes.
+*Still open in Phase 2:* SSO (SAML, OIDC) and SCIM provisioning, private deployment
+packaging, customer VPC connectivity, and multi-region disaster recovery — the last of
+which needs a running estate and the quarterly drills §17.8 describes.
 
 ## 19.4 Phase 3 — Platform
 

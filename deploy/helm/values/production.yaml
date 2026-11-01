@@ -82,3 +82,7 @@ analytics:
   # One minute is the default and the right default: alerts are thresholds, not a pager
   # substitute, and a shorter interval multiplies sweeps across every tenant.
   alertInterval: 60s
+  # Hourly: the rollup covers closed days, whose numbers change only when a day closes
+  # or a late event lands. Anything faster multiplies tenant sweeps for no freshness
+  # today's bucket does not have.
+  rollupInterval: 1h

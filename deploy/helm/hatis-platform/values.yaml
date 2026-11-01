@@ -61,6 +61,10 @@ analytics:
   # -- How often each tenant's alerts are evaluated (a Spring duration: 60s, 5m).
   # Bounds how late a firing can be; it does not change what fires.
   alertInterval: 60s
+  # -- How often the platform-event rollup is recomputed per tenant (a Spring duration).
+  # The rollup covers closed days, so this bounds how late a closed day or a late event
+  # reaches the dashboards. Recomputation is idempotent: the interval cannot double-count.
+  rollupInterval: 1h
 
 notification:
   email:

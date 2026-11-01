@@ -19,6 +19,8 @@ env:
     value: {{ .ctx.Values.events.transport | quote }}
   - name: HATIS_ANALYTICS_ALERT_INTERVAL
     value: {{ .ctx.Values.analytics.alertInterval | quote }}
+  - name: HATIS_ANALYTICS_ROLLUP_INTERVAL
+    value: {{ .ctx.Values.analytics.rollupInterval | quote }}
   {{- if .ctx.Values.notification.email.enabled }}
   - name: HATIS_NOTIFICATION_EMAIL_ENABLED
     value: "true"

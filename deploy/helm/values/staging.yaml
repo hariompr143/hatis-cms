@@ -65,3 +65,6 @@ analytics:
   # Staging evaluates more often than production so a misfiring rule is noticed in
   # minutes rather than in an hour.
   alertInterval: 30s
+  # The rollup recomputes rather than accumulates, so a faster cadence costs sweeps,
+  # not correctness.
+  rollupInterval: 15m
